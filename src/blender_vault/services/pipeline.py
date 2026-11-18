@@ -86,12 +86,15 @@ class AssetPipelineService:
         storage: VaultStorage,
         runner: BlenderWorkerRunner,
         gdrive: GoogleDriveSyncService,
+        *,
+        benchmark_hook: Optional[Any] = None,
     ) -> None:
         self.settings = settings
         self.db = db
         self.storage = storage
         self.runner = runner
         self.gdrive = gdrive
+        self.benchmark_hook = benchmark_hook
 
     # ------------------------------------------------------------------
     # Procedural Asset Generation
@@ -432,6 +435,12 @@ class AssetPipelineService:
         version.status = AssetStatus.AWAITING_HUMAN_APPROVAL
         self.db.update_version(version)
         self.storage.write_version_artifacts(asset, version)
+
+        if self.benchmark_hook is not None:
+            try:
+                self.benchmark_hook(asset.asset_id, version.version)
+            except Exception as exc:
+                logger.warning("Optional Branch 2 benchmark hook failed for %s v%s: %s", asset.asset_id, version.version, exc)
 
     def _run_visual_stage(
         self,

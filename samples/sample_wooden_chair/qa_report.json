@@ -1,0 +1,816 @@
+{
+  "status": "PASS",
+  "geometry_profile": "furniture_prop",
+  "blender_version": "5.3.0",
+  "file_opened_ok": true,
+  "object_count": 9,
+  "mesh_object_count": 9,
+  "total_vertices": 8080,
+  "total_edges": 16024,
+  "total_faces": 7978,
+  "total_tris": 16092,
+  "dimensions": [
+    0.44386,
+    0.53521,
+    0.8947
+  ],
+  "materials": [
+    "Wood_Oak"
+  ],
+  "collections": [
+    "Asset_Oak_Dining_Chair"
+  ],
+  "missing_dependencies": [],
+  "objects": [
+    {
+      "name": "Chair_Seat",
+      "collection": "Asset_Oak_Dining_Chair",
+      "vertex_count": 3026,
+      "edge_count": 6048,
+      "face_count": 3024,
+      "tri_count": 6048,
+      "dimensions": [
+        0.44386,
+        0.43,
+        0.032
+      ],
+      "scale": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "rotation_euler": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "origin_location": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "bbox_min": [
+        -0.22193,
+        -0.215,
+        0.418
+      ],
+      "bbox_max": [
+        0.22193,
+        0.215,
+        0.45
+      ],
+      "surface_area": 0.413005,
+      "signed_volume": 0.005335,
+      "non_manifold_edges": 0,
+      "boundary_edges": 0,
+      "multi_face_edges": 0,
+      "loose_verts": 0,
+      "loose_edges": 0,
+      "degenerate_faces": 0,
+      "zero_area_faces": 0,
+      "duplicate_verts": 0,
+      "inverted_normals_count": 0,
+      "has_uv": true,
+      "uv_layer_names": [
+        "Float2"
+      ],
+      "material_count": 1,
+      "materials": [
+        "Wood_Oak"
+      ],
+      "unassigned_material_faces": 0,
+      "modifiers": []
+    },
+    {
+      "name": "Chair_Leg_Front_Left",
+      "collection": "Asset_Oak_Dining_Chair",
+      "vertex_count": 42,
+      "edge_count": 70,
+      "face_count": 30,
+      "tri_count": 80,
+      "dimensions": [
+        0.04017,
+        0.04798,
+        0.43849
+      ],
+      "scale": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "rotation_euler": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "origin_location": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "bbox_min": [
+        -0.20567,
+        -0.19299,
+        -0.00062
+      ],
+      "bbox_max": [
+        -0.1655,
+        -0.14501,
+        0.43788
+      ],
+      "surface_area": 0.047311,
+      "signed_volume": 0.000377,
+      "non_manifold_edges": 0,
+      "boundary_edges": 0,
+      "multi_face_edges": 0,
+      "loose_verts": 0,
+      "loose_edges": 0,
+      "degenerate_faces": 0,
+      "zero_area_faces": 0,
+      "duplicate_verts": 0,
+      "inverted_normals_count": 0,
+      "has_uv": true,
+      "uv_layer_names": [
+        "Float2"
+      ],
+      "material_count": 1,
+      "materials": [
+        "Wood_Oak"
+      ],
+      "unassigned_material_faces": 0,
+      "modifiers": []
+    },
+    {
+      "name": "Chair_Leg_Front_Right",
+      "collection": "Asset_Oak_Dining_Chair",
+      "vertex_count": 42,
+      "edge_count": 70,
+      "face_count": 30,
+      "tri_count": 80,
+      "dimensions": [
+        0.04017,
+        0.04798,
+        0.43849
+      ],
+      "scale": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "rotation_euler": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "origin_location": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "bbox_min": [
+        0.1655,
+        -0.19299,
+        -0.00062
+      ],
+      "bbox_max": [
+        0.20567,
+        -0.14501,
+        0.43788
+      ],
+      "surface_area": 0.047311,
+      "signed_volume": 0.000377,
+      "non_manifold_edges": 0,
+      "boundary_edges": 0,
+      "multi_face_edges": 0,
+      "loose_verts": 0,
+      "loose_edges": 0,
+      "degenerate_faces": 0,
+      "zero_area_faces": 0,
+      "duplicate_verts": 0,
+      "inverted_normals_count": 0,
+      "has_uv": true,
+      "uv_layer_names": [
+        "Float2"
+      ],
+      "material_count": 1,
+      "materials": [
+        "Wood_Oak"
+      ],
+      "unassigned_material_faces": 0,
+      "modifiers": []
+    },
+    {
+      "name": "Chair_Stile_Rear_Left",
+      "collection": "Asset_Oak_Dining_Chair",
+      "vertex_count": 84,
+      "edge_count": 154,
+      "face_count": 72,
+      "tri_count": 164,
+      "dimensions": [
+        0.0461,
+        0.12571,
+        0.8947
+      ],
+      "scale": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "rotation_euler": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "origin_location": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "bbox_min": [
+        -0.1976,
+        0.15837,
+        -0.00161
+      ],
+      "bbox_max": [
+        -0.1515,
+        0.28408,
+        0.89308
+      ],
+      "surface_area": 0.102183,
+      "signed_volume": 0.00088,
+      "non_manifold_edges": 0,
+      "boundary_edges": 0,
+      "multi_face_edges": 0,
+      "loose_verts": 0,
+      "loose_edges": 0,
+      "degenerate_faces": 0,
+      "zero_area_faces": 0,
+      "duplicate_verts": 0,
+      "inverted_normals_count": 0,
+      "has_uv": true,
+      "uv_layer_names": [
+        "Float2"
+      ],
+      "material_count": 1,
+      "materials": [
+        "Wood_Oak"
+      ],
+      "unassigned_material_faces": 0,
+      "modifiers": []
+    },
+    {
+      "name": "Chair_Stile_Rear_Right",
+      "collection": "Asset_Oak_Dining_Chair",
+      "vertex_count": 84,
+      "edge_count": 154,
+      "face_count": 72,
+      "tri_count": 164,
+      "dimensions": [
+        0.0461,
+        0.12571,
+        0.8947
+      ],
+      "scale": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "rotation_euler": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "origin_location": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "bbox_min": [
+        0.1515,
+        0.15837,
+        -0.00161
+      ],
+      "bbox_max": [
+        0.1976,
+        0.28408,
+        0.89308
+      ],
+      "surface_area": 0.102183,
+      "signed_volume": 0.00088,
+      "non_manifold_edges": 0,
+      "boundary_edges": 0,
+      "multi_face_edges": 0,
+      "loose_verts": 0,
+      "loose_edges": 0,
+      "degenerate_faces": 0,
+      "zero_area_faces": 0,
+      "duplicate_verts": 0,
+      "inverted_normals_count": 0,
+      "has_uv": true,
+      "uv_layer_names": [
+        "Float2"
+      ],
+      "material_count": 1,
+      "materials": [
+        "Wood_Oak"
+      ],
+      "unassigned_material_faces": 0,
+      "modifiers": []
+    },
+    {
+      "name": "Chair_Aprons_And_Stretchers",
+      "collection": "Asset_Oak_Dining_Chair",
+      "vertex_count": 112,
+      "edge_count": 168,
+      "face_count": 70,
+      "tri_count": 196,
+      "dimensions": [
+        0.39998,
+        0.378,
+        0.267
+      ],
+      "scale": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "rotation_euler": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "origin_location": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "bbox_min": [
+        -0.19999,
+        -0.181,
+        0.141
+      ],
+      "bbox_max": [
+        0.19999,
+        0.197,
+        0.408
+      ],
+      "surface_area": 0.191388,
+      "signed_volume": 0.000996,
+      "non_manifold_edges": 0,
+      "boundary_edges": 0,
+      "multi_face_edges": 0,
+      "loose_verts": 0,
+      "loose_edges": 0,
+      "degenerate_faces": 0,
+      "zero_area_faces": 0,
+      "duplicate_verts": 0,
+      "inverted_normals_count": 0,
+      "has_uv": true,
+      "uv_layer_names": [
+        "Float2"
+      ],
+      "material_count": 1,
+      "materials": [
+        "Wood_Oak"
+      ],
+      "unassigned_material_faces": 0,
+      "modifiers": []
+    },
+    {
+      "name": "Chair_Backrest_Crest_Rail",
+      "collection": "Asset_Oak_Dining_Chair",
+      "vertex_count": 1514,
+      "edge_count": 3024,
+      "face_count": 1512,
+      "tri_count": 3024,
+      "dimensions": [
+        0.35,
+        0.07885,
+        0.073
+      ],
+      "scale": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "rotation_euler": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "origin_location": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "bbox_min": [
+        -0.175,
+        0.24136,
+        0.805
+      ],
+      "bbox_max": [
+        0.175,
+        0.32021,
+        0.878
+      ],
+      "surface_area": 0.071725,
+      "signed_volume": 0.000609,
+      "non_manifold_edges": 0,
+      "boundary_edges": 0,
+      "multi_face_edges": 0,
+      "loose_verts": 0,
+      "loose_edges": 0,
+      "degenerate_faces": 0,
+      "zero_area_faces": 0,
+      "duplicate_verts": 0,
+      "inverted_normals_count": 0,
+      "has_uv": true,
+      "uv_layer_names": [
+        "Float2"
+      ],
+      "material_count": 1,
+      "materials": [
+        "Wood_Oak"
+      ],
+      "unassigned_material_faces": 0,
+      "modifiers": []
+    },
+    {
+      "name": "Chair_Backrest_Lumbar_Rail",
+      "collection": "Asset_Oak_Dining_Chair",
+      "vertex_count": 794,
+      "edge_count": 1584,
+      "face_count": 792,
+      "tri_count": 1584,
+      "dimensions": [
+        0.346,
+        0.06478,
+        0.04
+      ],
+      "scale": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "rotation_euler": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "origin_location": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "bbox_min": [
+        -0.173,
+        0.18812,
+        0.545
+      ],
+      "bbox_max": [
+        0.173,
+        0.2529,
+        0.585
+      ],
+      "surface_area": 0.042977,
+      "signed_volume": 0.000275,
+      "non_manifold_edges": 0,
+      "boundary_edges": 0,
+      "multi_face_edges": 0,
+      "loose_verts": 0,
+      "loose_edges": 0,
+      "degenerate_faces": 0,
+      "zero_area_faces": 0,
+      "duplicate_verts": 0,
+      "inverted_normals_count": 0,
+      "has_uv": true,
+      "uv_layer_names": [
+        "Float2"
+      ],
+      "material_count": 1,
+      "materials": [
+        "Wood_Oak"
+      ],
+      "unassigned_material_faces": 0,
+      "modifiers": []
+    },
+    {
+      "name": "Chair_Backrest_Slats",
+      "collection": "Asset_Oak_Dining_Chair",
+      "vertex_count": 2382,
+      "edge_count": 4752,
+      "face_count": 2376,
+      "tri_count": 4752,
+      "dimensions": [
+        0.2536,
+        0.08123,
+        0.245
+      ],
+      "scale": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "rotation_euler": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "origin_location": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "bbox_min": [
+        -0.1268,
+        0.22445,
+        0.575
+      ],
+      "bbox_max": [
+        0.1268,
+        0.30567,
+        0.82
+      ],
+      "surface_area": 0.09928,
+      "signed_volume": 0.000493,
+      "non_manifold_edges": 0,
+      "boundary_edges": 0,
+      "multi_face_edges": 0,
+      "loose_verts": 0,
+      "loose_edges": 0,
+      "degenerate_faces": 0,
+      "zero_area_faces": 0,
+      "duplicate_verts": 0,
+      "inverted_normals_count": 0,
+      "has_uv": true,
+      "uv_layer_names": [
+        "Float2"
+      ],
+      "material_count": 1,
+      "materials": [
+        "Wood_Oak"
+      ],
+      "unassigned_material_faces": 0,
+      "modifiers": []
+    }
+  ],
+  "round_trip": {
+    "attempted": true,
+    "success": true,
+    "glb_path": "C:\\Users\\azlan\\Documents\\Antigravity_Project\\BlenderGenerator\\vault_storage\\tmp\\job_7055b0cdbf\\roundtrip_test.glb",
+    "original_mesh_count": 9,
+    "reimported_mesh_count": 9,
+    "original_dimensions": [
+      0.44386,
+      0.53521,
+      0.8947
+    ],
+    "reimported_dimensions": [
+      0.44386,
+      0.53521,
+      0.8947
+    ],
+    "dimension_delta_max": 0.0,
+    "material_count_before": 1,
+    "material_count_after": 1,
+    "tri_count_before": 16092,
+    "tri_count_after": 16092,
+    "error": null
+  },
+  "checks": [
+    {
+      "check_id": "file_open",
+      "name": "Blender File Opens Cleanly",
+      "category": "structure",
+      "status": "PASS",
+      "severity": "info",
+      "measured": true,
+      "threshold": true,
+      "message": "Scene loaded cleanly in Blender."
+    },
+    {
+      "check_id": "mesh_presence",
+      "name": "Valid Mesh Geometry Present",
+      "category": "geometry",
+      "status": "PASS",
+      "severity": "info",
+      "measured": {
+        "meshes": 9,
+        "verts": 8080,
+        "faces": 7978
+      },
+      "threshold": {
+        "meshes": ">=1",
+        "faces": ">=1"
+      },
+      "message": "Found 9 mesh object(s) with 8080 verts and 7978 faces."
+    },
+    {
+      "check_id": "dimensions_sanity",
+      "name": "Bounding Box Dimensions",
+      "category": "geometry",
+      "status": "PASS",
+      "severity": "info",
+      "measured": [
+        0.44386,
+        0.53521,
+        0.8947
+      ],
+      "threshold": "0.0001m < max <= 150m",
+      "message": "Bounding dimensions OK: [0.444, 0.535, 0.895]m."
+    },
+    {
+      "check_id": "object_scale",
+      "name": "Sensible Object Scale",
+      "category": "structure",
+      "status": "PASS",
+      "severity": "info",
+      "measured": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "threshold": "(1,1,1)",
+      "message": "All object scales normalized to (1,1,1)."
+    },
+    {
+      "check_id": "origin_grounding",
+      "name": "Origin & Ground Alignment",
+      "category": "structure",
+      "status": "PASS",
+      "severity": "info",
+      "measured": -0.0016,
+      "threshold": "|min_z| <= 0.224m",
+      "message": "Lowest point Z=-0.0016m. Well grounded near Z=0."
+    },
+    {
+      "check_id": "face_normals",
+      "name": "Face Normals & Winding Consistency",
+      "category": "geometry",
+      "status": "PASS",
+      "severity": "info",
+      "measured": 0,
+      "threshold": 0,
+      "message": "All face normals consistent and outward-facing."
+    },
+    {
+      "check_id": "degenerate_faces",
+      "name": "Degenerate & Zero-Area Faces",
+      "category": "geometry",
+      "status": "PASS",
+      "severity": "info",
+      "measured": 0,
+      "threshold": 0,
+      "message": "No zero-area or degenerate faces."
+    },
+    {
+      "check_id": "loose_geometry",
+      "name": "Loose Vertices & Edges",
+      "category": "geometry",
+      "status": "PASS",
+      "severity": "info",
+      "measured": {
+        "loose_verts": 0,
+        "loose_edges": 0
+      },
+      "threshold": 0,
+      "message": "No floating loose vertices or edges."
+    },
+    {
+      "check_id": "duplicate_verts",
+      "name": "Overlapping Duplicate Vertices",
+      "category": "geometry",
+      "status": "PASS",
+      "severity": "info",
+      "measured": 0,
+      "threshold": "0 (FAIL > 5%)",
+      "message": "No overlapping duplicate vertices detected."
+    },
+    {
+      "check_id": "non_manifold_multi",
+      "name": "Non-Manifold Multi-Face Edges",
+      "category": "geometry",
+      "status": "PASS",
+      "severity": "info",
+      "measured": 0,
+      "threshold": 0,
+      "message": "No multi-face non-manifold edges."
+    },
+    {
+      "check_id": "boundary_edges",
+      "name": "Open Boundary Edges / Watertightness",
+      "category": "geometry",
+      "status": "PASS",
+      "severity": "info",
+      "measured": 0,
+      "threshold": "0 (advisory)",
+      "message": "Mesh is closed/watertight (0 boundary edges)."
+    },
+    {
+      "check_id": "poly_density",
+      "name": "Mesh Density & Polycount",
+      "category": "structure",
+      "status": "PASS",
+      "severity": "info",
+      "measured": 16092,
+      "threshold": "<= 100000",
+      "message": "Appropriate triangle count (16092 tris)."
+    },
+    {
+      "check_id": "object_naming",
+      "name": "Meaningful Object Names",
+      "category": "structure",
+      "status": "PASS",
+      "severity": "info",
+      "measured": [
+        "Chair_Seat",
+        "Chair_Leg_Front_Left",
+        "Chair_Leg_Front_Right",
+        "Chair_Stile_Rear_Left",
+        "Chair_Stile_Rear_Right",
+        "Chair_Aprons_And_Stretchers",
+        "Chair_Backrest_Crest_Rail",
+        "Chair_Backrest_Lumbar_Rail",
+        "Chair_Backrest_Slats"
+      ],
+      "threshold": "Descriptive object names",
+      "message": "All mesh objects have descriptive names."
+    },
+    {
+      "check_id": "collection_org",
+      "name": "Collection Organization",
+      "category": "structure",
+      "status": "PASS",
+      "severity": "info",
+      "measured": [
+        "Asset_Oak_Dining_Chair"
+      ],
+      "threshold": "Dedicated asset collection",
+      "message": "Organized in collections: Asset_Oak_Dining_Chair."
+    },
+    {
+      "check_id": "materials",
+      "name": "Material Assignment",
+      "category": "materials",
+      "status": "PASS",
+      "severity": "info",
+      "measured": {
+        "materials": [
+          "Wood_Oak"
+        ],
+        "unassigned_faces": 0
+      },
+      "threshold": "All faces assigned",
+      "message": "Assigned 1 material(s): Wood_Oak."
+    },
+    {
+      "check_id": "uv_mapping",
+      "name": "UV Map Coverage",
+      "category": "materials",
+      "status": "PASS",
+      "severity": "info",
+      "measured": "All UVs present",
+      "threshold": "UV layer",
+      "message": "UV layers present on all required meshes."
+    },
+    {
+      "check_id": "external_dependencies",
+      "name": "External Textures & Linked Libraries",
+      "category": "materials",
+      "status": "PASS",
+      "severity": "info",
+      "measured": [],
+      "threshold": [],
+      "message": "All referenced textures and libraries resolved."
+    },
+    {
+      "check_id": "modifiers",
+      "name": "Modifier Stack Sanity",
+      "category": "structure",
+      "status": "PASS",
+      "severity": "info",
+      "measured": "Clean",
+      "threshold": "Subsurf levels <= 3",
+      "message": "Modifier stack clean and editable."
+    },
+    {
+      "check_id": "glb_round_trip",
+      "name": "GLB Export & Reimport Round-Trip",
+      "category": "round_trip",
+      "status": "PASS",
+      "severity": "info",
+      "measured": {
+        "reimported_meshes": 9,
+        "dimension_delta_max": 0.0,
+        "materials_before": 1,
+        "materials_after": 1
+      },
+      "threshold": "dim_delta <= 0.0268m & materials preserved",
+      "message": "GLB round-trip verified (max dim delta=0.0m, mats 1->1)."
+    }
+  ],
+  "warnings_count": 0,
+  "failures_count": 0,
+  "summary": "Technical QA PASSED (19/19 checks clean).",
+  "inspected_at": "2026-11-18T03:24:19+00:00"
+}

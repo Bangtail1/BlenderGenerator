@@ -1,0 +1,121 @@
+{
+  "provider": "unconfigured",
+  "model": "none",
+  "status": "UNCONFIGURED",
+  "score": null,
+  "confidence": 0.0,
+  "recommendation": "NEEDS_HUMAN_REVIEW",
+  "summary": "No multimodal vision reviewer is configured (VISION_QA_PROVIDER=none). Multi-angle renders were generated and verified for pixel sanity; human visual inspection is required in Stage 2 before approval.",
+  "matches_description": null,
+  "component_check": "Awaiting multimodal vision model or Stage 2 human visual inspection.",
+  "proportion_check": "Awaiting multimodal vision model or Stage 2 human visual inspection.",
+  "surface_and_materials_check": "Awaiting multimodal vision model or Stage 2 human visual inspection.",
+  "issues_found": [],
+  "render_paths": {
+    "front": "C:\\Users\\azlan\\Documents\\Antigravity_Project\\BlenderGenerator\\vault_storage\\assets\\522b12bb84f3\\v1\\previews\\front.png",
+    "back": "C:\\Users\\azlan\\Documents\\Antigravity_Project\\BlenderGenerator\\vault_storage\\assets\\522b12bb84f3\\v1\\previews\\back.png",
+    "left": "C:\\Users\\azlan\\Documents\\Antigravity_Project\\BlenderGenerator\\vault_storage\\assets\\522b12bb84f3\\v1\\previews\\left.png",
+    "right": "C:\\Users\\azlan\\Documents\\Antigravity_Project\\BlenderGenerator\\vault_storage\\assets\\522b12bb84f3\\v1\\previews\\right.png",
+    "top": "C:\\Users\\azlan\\Documents\\Antigravity_Project\\BlenderGenerator\\vault_storage\\assets\\522b12bb84f3\\v1\\previews\\top.png",
+    "three_quarter": "C:\\Users\\azlan\\Documents\\Antigravity_Project\\BlenderGenerator\\vault_storage\\assets\\522b12bb84f3\\v1\\previews\\three_quarter.png",
+    "material_beauty": "C:\\Users\\azlan\\Documents\\Antigravity_Project\\BlenderGenerator\\vault_storage\\assets\\522b12bb84f3\\v1\\previews\\material_beauty.png",
+    "closeup": "C:\\Users\\azlan\\Documents\\Antigravity_Project\\BlenderGenerator\\vault_storage\\assets\\522b12bb84f3\\v1\\previews\\closeup.png",
+    "wireframe": "C:\\Users\\azlan\\Documents\\Antigravity_Project\\BlenderGenerator\\vault_storage\\assets\\522b12bb84f3\\v1\\previews\\wireframe.png"
+  },
+  "turntable_path": "C:\\Users\\azlan\\Documents\\Antigravity_Project\\BlenderGenerator\\vault_storage\\assets\\522b12bb84f3\\v1\\previews\\turntable.webp",
+  "contact_sheet_path": "C:\\Users\\azlan\\Documents\\Antigravity_Project\\BlenderGenerator\\vault_storage\\assets\\522b12bb84f3\\v1\\previews\\contact_sheet.png",
+  "render_sanity_ok": true,
+  "render_sanity_details": {
+    "front": {
+      "size": [
+        768,
+        768
+      ],
+      "file_bytes": 587249,
+      "mean_luma": 111.84,
+      "contrast_stddev": 27.02,
+      "non_blank": true
+    },
+    "back": {
+      "size": [
+        768,
+        768
+      ],
+      "file_bytes": 588460,
+      "mean_luma": 109.96,
+      "contrast_stddev": 22.06,
+      "non_blank": true
+    },
+    "left": {
+      "size": [
+        768,
+        768
+      ],
+      "file_bytes": 558095,
+      "mean_luma": 105.64,
+      "contrast_stddev": 14.23,
+      "non_blank": true
+    },
+    "right": {
+      "size": [
+        768,
+        768
+      ],
+      "file_bytes": 551245,
+      "mean_luma": 106.62,
+      "contrast_stddev": 17.11,
+      "non_blank": true
+    },
+    "top": {
+      "size": [
+        768,
+        768
+      ],
+      "file_bytes": 554084,
+      "mean_luma": 114.56,
+      "contrast_stddev": 30.29,
+      "non_blank": true
+    },
+    "three_quarter": {
+      "size": [
+        768,
+        768
+      ],
+      "file_bytes": 710023,
+      "mean_luma": 157.69,
+      "contrast_stddev": 44.94,
+      "non_blank": true
+    },
+    "closeup": {
+      "size": [
+        768,
+        768
+      ],
+      "file_bytes": 771220,
+      "mean_luma": 167.43,
+      "contrast_stddev": 47.67,
+      "non_blank": true
+    },
+    "wireframe": {
+      "size": [
+        768,
+        768
+      ],
+      "file_bytes": 705418,
+      "mean_luma": 145.1,
+      "contrast_stddev": 27.39,
+      "non_blank": true
+    },
+    "material_beauty": {
+      "size": [
+        768,
+        768
+      ],
+      "file_bytes": 737909,
+      "mean_luma": 154.69,
+      "contrast_stddev": 40.78,
+      "non_blank": true
+    }
+  },
+  "analyzed_at": "2026-11-18T03:24:32+00:00"
+}

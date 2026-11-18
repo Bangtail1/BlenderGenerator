@@ -96,3 +96,31 @@ def test_import_obj_glb_and_reject_unsupported_format(tmp_path: Path) -> None:
     # Duplicate import detection
     with pytest.raises(DuplicateAssetError):
         pipe.import_model_file(temp_upload_path=obj_file, original_filename="crate.obj")
+
+    # Generate a temporary .blend + .glb to test importing .glb and .blend cleanly
+    src_gen = pipe.generate_procedural_asset(
+        GenerateAssetRequest(prompt="Create a test sphere", name="Seed Sphere", template_id="test_uv_sphere")
+    )
+    assert src_gen.latest is not None
+
+    glb_import = pipe.import_model_file(
+        temp_upload_path=Path(src_gen.latest.glb_path),
+        original_filename="imported_sphere.glb",
+        name="Imported GLB Sphere",
+        category="Miscellaneous",
+        provenance_type=ProvenanceType.USER_UPLOADED,
+    )
+    assert glb_import.latest is not None
+    assert glb_import.latest.technical_qa.file_opened_ok is True
+    assert "glb" in glb_import.latest.file_formats
+
+    blend_import = pipe.import_model_file(
+        temp_upload_path=Path(src_gen.latest.blend_path),
+        original_filename="imported_sphere.blend",
+        name="Imported Blend Sphere",
+        category="Miscellaneous",
+        provenance_type=ProvenanceType.USER_UPLOADED,
+        allow_duplicate=True,
+    )
+    assert blend_import.latest is not None
+    assert blend_import.latest.technical_qa.status == TechnicalQAStatus.PASS

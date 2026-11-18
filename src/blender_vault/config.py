@@ -88,6 +88,25 @@ class Settings(BaseSettings):
     external_3d_provider: str = "none"
     external_3d_api_key: str = ""
 
+    # Branch 2: BlendSwap Reference Intelligence Engine
+    blendswap_key: str = ""
+    blendswap_base_url: str = "https://blendswap.com/api/v1"
+    blendswap_timeout_seconds: float = 30.0
+    reference_library_dir: Optional[Path] = None
+    collection_daily_target: int = 7
+    collection_schedule_time: str = "02:00"
+    collection_timezone: str = "Europe/London"
+    collection_scheduler_enabled: bool = True
+    allow_credit_spend: bool = False
+    reference_license_policy: str = "all_free"  # all_free | cc_only | permissive_only
+    reference_drive_sync_enabled: bool = True
+
+    @property
+    def resolved_reference_library_dir(self) -> Path:
+        if self.reference_library_dir is not None:
+            return self.reference_library_dir
+        return self.vault_data_dir / "reference_library"
+
     @property
     def db_path(self) -> Path:
         return self.vault_data_dir / "vault.db"

@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Blender Asset Vault — Autonomous 3D Library</title>
+  <title>Blender Asset Vault &amp; Reference Intelligence Engine</title>
   <link rel="stylesheet" href="/static/styles.css" />
   <script type="importmap">
     {
@@ -20,9 +20,13 @@
       <div class="brand-mark">BV</div>
       <div>
         <h1>Blender Asset Vault</h1>
-        <p class="subtitle">Local-First 3D Mesh Quality Pipeline &amp; Google Drive Library</p>
+        <p class="subtitle">Branch 1: Local Asset Pipeline &amp; Branch 2: BlendSwap Reference Intelligence</p>
       </div>
     </div>
+    <nav class="branch-switcher" aria-label="Workspace branches">
+      <button class="branch-btn active" data-branch="branch1">Asset Vault (Branch 1)</button>
+      <button class="branch-btn" data-branch="branch2">Reference Engine (Branch 2)</button>
+    </nav>
     <div class="system-pills" id="system-pills">
       <span class="pill pill-muted">Checking Blender...</span>
     </div>
@@ -34,7 +38,8 @@
     </div>
   </header>
 
-  <main class="container">
+  <!-- BRANCH 1 VIEW -->
+  <main class="container branch-view active" id="view-branch1">
     <section class="toolbar">
       <div class="search-wrap">
         <input type="search" id="search-input" placeholder="Search assets by name, tags, description, or license..." />
@@ -56,14 +61,45 @@
 
     <nav class="category-bar" id="category-bar" aria-label="Asset categories"></nav>
 
-    <section class="stats-strip" id="stats-strip"></nav>
+    <section class="stats-strip" id="stats-strip"></section>
 
     <section id="asset-grid" class="asset-grid">
       <div class="empty-state">Loading asset catalogue...</div>
     </section>
   </main>
 
-  <!-- Asset Detail & Human Inspection Modal -->
+  <!-- BRANCH 2 VIEW -->
+  <main class="container branch-view" id="view-branch2">
+    <nav class="ref-subnav" aria-label="Reference Engine Sections">
+      <button class="ref-tab active" data-reftab="overview">A. Collection Overview</button>
+      <button class="ref-tab" data-reftab="library">B. Reference Library</button>
+      <button class="ref-tab" data-reftab="popularity">C. Popularity Analysis</button>
+      <button class="ref-tab" data-reftab="quality">D. Quality Intelligence</button>
+      <button class="ref-tab" data-reftab="benchmarks">E. Benchmark Results</button>
+      <button class="ref-tab" data-reftab="attribution">F. Attribution &amp; Licensing</button>
+    </nav>
+
+    <section id="refpanel-overview" class="refpanel active"></section>
+    <section id="refpanel-library" class="refpanel"></section>
+    <section id="refpanel-popularity" class="refpanel"></section>
+    <section id="refpanel-quality" class="refpanel"></section>
+    <section id="refpanel-benchmarks" class="refpanel"></section>
+    <section id="refpanel-attribution" class="refpanel"></section>
+  </main>
+
+  <!-- Reference Asset Detail Modal -->
+  <dialog id="ref-detail-modal" class="modal modal-xl">
+    <div class="modal-header">
+      <div>
+        <h2 id="ref-detail-title">Reference Asset Inspector</h2>
+        <p id="ref-detail-subtitle" class="muted"></p>
+      </div>
+      <button class="btn btn-ghost" data-close="ref-detail-modal">Close ✕</button>
+    </div>
+    <div id="ref-detail-body" class="form-stack"></div>
+  </dialog>
+
+  <!-- Asset Detail & Human Inspection Modal (Branch 1) -->
   <dialog id="detail-modal" class="modal modal-xl">
     <div class="modal-header">
       <div>

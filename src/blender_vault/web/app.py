@@ -6,6 +6,7 @@ import logging
 import shutil
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Optional
 
@@ -26,6 +27,18 @@ from ..models import (
     HumanReviewRequest,
     ProvenanceType,
 )
+from ..reference.benchmark_engine import BenchmarkEngine
+from ..reference.blendswap_client import BlendSwapClient
+from ..reference.collector import CollectionCycleService
+from ..reference.dashboard_service import ReferenceDashboardService
+from ..reference.grading_engine import QualityGradingEngine
+from ..reference.inspector_service import ReferenceInspectorService
+from ..reference.models import ReferenceAssetStatus
+from ..reference.ref_db import ReferenceDatabase
+from ..reference.reference_drive_sync import ReferenceDriveSyncService
+from ..reference.reference_storage import ReferenceStorage
+from ..reference.router import build_reference_router
+from ..reference.scheduler import DailyCollectionScheduler
 from ..services.desktop import launch_in_blender_gui
 from ..services.gdrive_service import (
     DriveIntegrityError,
@@ -55,6 +68,7 @@ def create_app(
     *,
     settings: Optional[Settings] = None,
     gdrive_service_factory: Any = None,
+    start_scheduler: bool = True,
 ) -> FastAPI:
     cfg = settings or Settings()
     cfg.ensure_directories()
@@ -64,16 +78,56 @@ def create_app(
     storage = VaultStorage(cfg.assets_dir, cfg.imports_dir)
     runner = BlenderWorkerRunner(cfg.blender_executable, cfg.blender_timeout_seconds)
     gdrive = GoogleDriveSyncService(cfg, db, storage, service_factory=gdrive_service_factory)
-    pipeline = AssetPipelineService(cfg, db, storage, runner, gdrive)
+
+    # Branch 2: Reference Intelligence Engine services (shared DB & Drive auth, strictly separate tables & storage)
+    ref_db = ReferenceDatabase(db)
+    ref_storage = ReferenceStorage(cfg.resolved_reference_library_dir)
+    bs_client = BlendSwapClient(cfg, ref_db)
+    ref_inspector = ReferenceInspectorService(cfg, runner)
+    ref_grader = QualityGradingEngine()
+    ref_drive = ReferenceDriveSyncService(gdrive, ref_db, ref_storage)
+    ref_collector = CollectionCycleService(cfg, ref_db, ref_storage, bs_client, ref_inspector, ref_grader, ref_drive)
+    ref_scheduler = DailyCollectionScheduler(cfg, db, ref_collector)
+    ref_dashboard = ReferenceDashboardService(cfg, ref_db, bs_client, ref_scheduler)
+    benchmark_engine = BenchmarkEngine(db, ref_db, ref_storage, ref_inspector, ref_grader, ref_drive)
+
+    def _auto_benchmark_if_ready(asset_id: str, version_num: int) -> None:
+        if ref_db.list_reference_assets(status=ReferenceAssetStatus.GRADED.value, limit=1, include_details=False):
+            benchmark_engine.benchmark_branch1_asset(asset_id, version_num=version_num, sync_to_drive=False)
+
+    pipeline = AssetPipelineService(cfg, db, storage, runner, gdrive, benchmark_hook=_auto_benchmark_if_ready)
     executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="vault-worker")
 
-    app = FastAPI(title="Blender Asset Vault", version="0.1.0")
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        if start_scheduler and cfg.collection_scheduler_enabled:
+            ref_scheduler.start()
+        try:
+            yield
+        finally:
+            ref_scheduler.stop()
+            bs_client.close()
+            executor.shutdown(wait=False)
+
+    app = FastAPI(title="Blender Asset Vault", version="0.2.0", lifespan=lifespan)
     app.state.settings = cfg
     app.state.db = db
     app.state.storage = storage
     app.state.runner = runner
     app.state.gdrive = gdrive
     app.state.pipeline = pipeline
+    app.state.ref_db = ref_db
+    app.state.ref_storage = ref_storage
+    app.state.bs_client = bs_client
+    app.state.ref_inspector = ref_inspector
+    app.state.ref_grader = ref_grader
+    app.state.ref_drive = ref_drive
+    app.state.ref_collector = ref_collector
+    app.state.ref_scheduler = ref_scheduler
+    app.state.ref_dashboard = ref_dashboard
+    app.state.benchmark_engine = benchmark_engine
+
+    app.include_router(build_reference_router(app.state))
 
     STATIC_DIR.mkdir(parents=True, exist_ok=True)
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
@@ -116,6 +170,11 @@ def create_app(
                 {"id": "test_uv_sphere", "label": "Calibrated UV Sphere", "category": "Miscellaneous"},
             ],
             "counts": {"total_assets": len(assets), "by_status": status_counts},
+            "reference_engine": {
+                "blendswap_configured": bool((cfg.blendswap_key or "").strip()),
+                "reference_count": len(ref_db.list_reference_assets(include_details=False)),
+                "scheduler": ref_scheduler.get_schedule_config(),
+            },
         }
 
     # ------------------------------------------------------------------

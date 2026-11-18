@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+import { createReferenceDashboard } from "/static/reference_dashboard.js";
 
 const state = {
   health: null,
@@ -73,6 +74,12 @@ async function loadHealth() {
   } else {
     pills.push(`<span class="pill pill-muted">Drive: Setup Needed</span>`);
   }
+  const refEng = h.reference_engine || {};
+  pills.push(
+    refEng.blendswap_configured
+      ? `<span class="pill pill-info">BlendSwap Ref: ${refEng.reference_count || 0}</span>`
+      : `<span class="pill pill-muted">BlendSwap Key: Unset</span>`
+  );
   document.getElementById("system-pills").innerHTML = pills.join("");
 
   // Populate category filters & modal dropdowns
@@ -263,6 +270,7 @@ function renderOverviewPanel(asset, v) {
         ${v.glb_path ? `<a class="btn btn-secondary" href="/api/assets/${asset.asset_id}/versions/${v.version}/download/glb">Download .glb</a>` : ""}
         ${v.source_original_path ? `<a class="btn btn-ghost" href="/api/assets/${asset.asset_id}/versions/${v.version}/download/original">Original File</a>` : ""}
         <button class="btn btn-ghost" id="act-retry">Re-run / Retry QA</button>
+        <button class="btn btn-secondary" id="act-benchmark" ${v.blend_path ? "" : "disabled"}>Benchmark vs Ref Library</button>
       </div>
       <div id="overview-action-msg" class="feedback hidden"></div>
     </div>
@@ -270,6 +278,24 @@ function renderOverviewPanel(asset, v) {
 
   document.getElementById("detail-ver-select").addEventListener("change", (e) => {
     openAssetDetail(asset.asset_id, Number(e.target.value));
+  });
+  document.getElementById("act-benchmark").addEventListener("click", async () => {
+    const msgEl = document.getElementById("overview-action-msg");
+    showFeedback(msgEl, "Benchmarking against Branch 2 Reference Library...", "info");
+    try {
+      const bmk = await api(`/api/reference/benchmarks/run/${asset.asset_id}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ version_num: v.version }),
+      });
+      showFeedback(
+        msgEl,
+        `Benchmark Grade: ${bmk.local_grade.grade_letter} (${bmk.local_grade.total_score}/100) vs ${bmk.selected_references.length} ref(s). ${bmk.efficiency_note}`,
+        "ok"
+      );
+    } catch (e) {
+      showFeedback(msgEl, e.message, "err");
+    }
   });
   document.getElementById("act-open-blender").addEventListener("click", async () => {
     const msgEl = document.getElementById("overview-action-msg");
@@ -841,6 +867,15 @@ document.addEventListener("DOMContentLoaded", async () => {
     viewer.controls.target.copy(viewer.defaultTarget);
     viewer.controls.update();
   });
+
+  const refDashboard = createReferenceDashboard({
+    api,
+    escapeHtml,
+    badge,
+    showFeedback,
+    getBranch1Assets: () => state.assets || [],
+  });
+  refDashboard.initEvents();
 
   await loadHealth();
   await loadAssets();
