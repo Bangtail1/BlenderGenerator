@@ -1,15 +1,17 @@
-"""Command-line entry point for running Blender Asset Vault web server, Branch 2 collector, or CLI checks."""
+"""Command-line entry point for running Blender Asset Vault web server, Branch 2 collector, or Roblox QA CLI."""
 
 from __future__ import annotations
 
 import argparse
 import json
 import time
+from pathlib import Path
 
 import uvicorn
 
 from .blender_worker.runner import BlenderWorkerRunner
 from .config import Settings
+from .database import RobloxAssetRegistrar
 from .db import VaultDatabase
 from .logging_config import configure_logging
 from .reference.benchmark_engine import BenchmarkEngine
@@ -21,8 +23,11 @@ from .reference.ref_db import ReferenceDatabase
 from .reference.reference_drive_sync import ReferenceDriveSyncService
 from .reference.reference_storage import ReferenceStorage
 from .reference.scheduler import DailyCollectionScheduler
+from .reports.report_generator import QAReportGenerator
+from .roblox_qa import RobloxQAEngine, RobloxWorkflowService
 from .services.gdrive_service import GoogleDriveSyncService
 from .services.storage import VaultStorage
+from .storage.sync_manager import RobloxDriveSyncManager
 
 
 def _build_branch2_services(settings: Settings):
@@ -42,8 +47,24 @@ def _build_branch2_services(settings: Settings):
     return db, storage, runner, gdrive, ref_db, ref_storage, client, collector, scheduler, benchmark
 
 
+def _build_roblox_services(settings: Settings):
+    db = VaultDatabase(settings.db_path)
+    storage = VaultStorage(settings.assets_dir, settings.imports_dir)
+    runner = BlenderWorkerRunner(settings.blender_executable, settings.blender_timeout_seconds)
+    gdrive = GoogleDriveSyncService(settings, db, storage)
+    registrar = RobloxAssetRegistrar(settings)
+    sync_mgr = RobloxDriveSyncManager(gdrive, registrar.db, db)
+    workflow = RobloxWorkflowService(
+        settings,
+        roblox_db=registrar.db,
+        qa_engine=RobloxQAEngine(settings, runner=runner),
+        sync_manager=sync_mgr,
+    )
+    return db, registrar, sync_mgr, workflow
+
+
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Blender Asset Vault CLI")
+    parser = argparse.ArgumentParser(description="Blender Asset Vault & Roblox QA CLI")
     sub = parser.add_subparsers(dest="command", required=True)
 
     serve_p = sub.add_parser("serve", help="Start the Blender Asset Vault Web UI & API server")
@@ -67,6 +88,27 @@ def main() -> None:
     bench_p.add_argument("--version", type=int, default=None)
     bench_p.add_argument("--usage", default=None)
     bench_p.add_argument("--style", default=None)
+
+    # Pipeline 1 & 2 Roblox Asset Management & QA CLI commands
+    r_init = sub.add_parser("roblox-init", help="Initialize Roblox SQLite DB, seed 25+15 departments, and sync existing Vault assets")
+    r_init.add_argument("--no-sync-existing", action="store_true")
+
+    r_qa = sub.add_parser("roblox-qa", help="Run automated 100-point Roblox QA and generate JSON/HTML reports")
+    r_qa.add_argument("target", help="Roblox asset_id or path to a .blend file")
+    r_qa.add_argument("--department", default="FUR", help="Department code when targeting a standalone .blend")
+    r_qa.add_argument("--version", type=int, default=None)
+    r_qa.add_argument("--format", default=None, choices=["FBX", "GLB", "OBJ"])
+    r_qa.add_argument("--no-previews", action="store_true")
+
+    r_app = sub.add_parser("roblox-approve", help="Human final approval gate and production Google Drive sync")
+    r_app.add_argument("asset_id", help="Roblox asset_id")
+    r_app.add_argument("--reviewer", required=True)
+    r_app.add_argument("--notes", default="")
+    r_app.add_argument("--version", type=int, default=None)
+    r_app.add_argument("--no-drive-sync", action="store_true")
+
+    sub.add_parser("roblox-retry-drive", help="Retry pending queued Google Drive uploads")
+    sub.add_parser("roblox-status", help="Show Roblox DB integrity, department counts, and assets summary")
 
     args = parser.parse_args()
     settings = Settings()
@@ -100,6 +142,7 @@ def main() -> None:
                     "blendswap": bs_status,
                     "data_dir": str(settings.vault_data_dir.resolve()),
                     "reference_library_dir": str(settings.resolved_reference_library_dir.resolve()),
+                    "roblox_db_path": str(settings.resolved_roblox_db_path.resolve()),
                 },
                 indent=2,
             )
@@ -168,6 +211,111 @@ def main() -> None:
             print(report.model_dump_json(indent=2))
         finally:
             client.close()
+    elif args.command == "roblox-init":
+        db, registrar, _, _ = _build_roblox_services(settings)
+        synced = [] if args.no_sync_existing else registrar.sync_all_from_vault_db(db)
+        print(
+            json.dumps(
+                {
+                    "db_path": str(registrar.db.db_path),
+                    "integrity": registrar.db.verify_integrity(),
+                    "universal_departments": len(registrar.categories.list_categories(library_type="UNIVERSAL")),
+                    "genre_departments": len(registrar.categories.list_categories(library_type="GENRE")),
+                    "synced_assets": [a.asset_id for a in synced],
+                },
+                indent=2,
+            )
+        )
+    elif args.command == "roblox-qa":
+        _, _, _, wf = _build_roblox_services(settings)
+        p = Path(args.target)
+        if p.is_file():
+            qa_out = wf.qa_engine.evaluate_blend(
+                blend_path=p,
+                asset_id=p.stem,
+                asset_name=p.stem,
+                department_code=args.department,
+                export_format=args.format,
+                render_previews=not args.no_previews,
+            )
+            rpaths = QAReportGenerator(settings.resolved_roblox_reports_dir).generate_reports(qa_out)
+            print(
+                json.dumps(
+                    {
+                        "asset_id": qa_out.asset_id,
+                        "overall_score": qa_out.overall_score,
+                        "grade": qa_out.grade,
+                        "final_status": qa_out.final_status,
+                        "report_paths": {k: str(v) for k, v in rpaths.items()},
+                    },
+                    indent=2,
+                )
+            )
+        else:
+            res = wf.run_qa_for_asset(
+                args.target,
+                version_number=args.version,
+                render_previews=not args.no_previews,
+                export_format=args.format,
+            )
+            print(
+                json.dumps(
+                    {
+                        "asset_id": res["asset"].asset_id,
+                        "overall_score": res["qa_output"].overall_score,
+                        "grade": res["qa_output"].grade,
+                        "final_status": res["qa_output"].final_status,
+                        "report_paths": {k: str(v) for k, v in res["report_paths"].items()},
+                    },
+                    indent=2,
+                )
+            )
+    elif args.command == "roblox-approve":
+        _, _, _, wf = _build_roblox_services(settings)
+        res = wf.approve_asset(
+            args.asset_id,
+            version_number=args.version,
+            reviewer=args.reviewer,
+            notes=args.notes,
+            sync_to_drive=not args.no_drive_sync,
+        )
+        print(
+            json.dumps(
+                {
+                    "asset_id": res["asset"].asset_id,
+                    "status": res["asset"].production_status.value,
+                    "approved_by": res["asset"].approved_by,
+                    "drive_sync": res["drive_sync"],
+                },
+                indent=2,
+            )
+        )
+    elif args.command == "roblox-retry-drive":
+        _, _, sync_mgr, _ = _build_roblox_services(settings)
+        print(json.dumps(sync_mgr.retry_pending_uploads(), indent=2))
+    elif args.command == "roblox-status":
+        registrar = RobloxAssetRegistrar(settings)
+        print(
+            json.dumps(
+                {
+                    "integrity": registrar.db.verify_integrity(),
+                    "assets": [
+                        {
+                            "asset_id": a.asset_id,
+                            "asset_name": a.asset_name,
+                            "status": a.production_status.value,
+                            "qa_score": a.qa_score,
+                            "qa_grade": a.qa_grade,
+                            "human_approved": a.human_approved,
+                            "google_drive_file_id": a.google_drive_file_id,
+                        }
+                        for a in registrar.assets.list_assets()
+                    ],
+                    "pending_drive_uploads": len(registrar.logs.list_pending_drive_uploads()),
+                },
+                indent=2,
+            )
+        )
 
 
 if __name__ == "__main__":

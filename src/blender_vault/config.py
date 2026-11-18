@@ -101,6 +101,53 @@ class Settings(BaseSettings):
     reference_license_policy: str = "all_free"  # all_free | cc_only | permissive_only
     reference_drive_sync_enabled: bool = True
 
+    # Pipeline 1 & 2: Roblox Asset Database & Automated QA System
+    roblox_db_path: Optional[Path] = None
+    roblox_backups_dir: Optional[Path] = None
+    roblox_master_inventory_path: Path = Field(default=Path("./config/master_inventory.json"))
+    roblox_qa_rules_path: Path = Field(default=Path("./config/qa_rules.json"))
+    roblox_reports_dir: Optional[Path] = None
+    roblox_output_dir: Optional[Path] = None
+    roblox_default_export_format: str = "FBX"  # FBX | GLB | OBJ
+    roblox_auto_register: bool = True
+    roblox_auto_qa: bool = True
+
+    @property
+    def _is_default_vault_dir(self) -> bool:
+        return self.vault_data_dir == Path("./vault_storage")
+
+    @property
+    def resolved_roblox_db_path(self) -> Path:
+        if self.roblox_db_path is not None:
+            return self.roblox_db_path
+        if self._is_default_vault_dir:
+            return Path("./data/roblox_asset_library.db")
+        return self.vault_data_dir / "roblox_asset_library.db"
+
+    @property
+    def resolved_roblox_backups_dir(self) -> Path:
+        if self.roblox_backups_dir is not None:
+            return self.roblox_backups_dir
+        if self._is_default_vault_dir:
+            return Path("./data/backups")
+        return self.vault_data_dir / "roblox_backups"
+
+    @property
+    def resolved_roblox_reports_dir(self) -> Path:
+        if self.roblox_reports_dir is not None:
+            return self.roblox_reports_dir
+        if self._is_default_vault_dir:
+            return Path("./reports")
+        return self.vault_data_dir / "roblox_reports"
+
+    @property
+    def resolved_roblox_output_dir(self) -> Path:
+        if self.roblox_output_dir is not None:
+            return self.roblox_output_dir
+        if self._is_default_vault_dir:
+            return Path("./output")
+        return self.vault_data_dir / "roblox_output"
+
     @property
     def resolved_reference_library_dir(self) -> Path:
         if self.reference_library_dir is not None:
@@ -140,6 +187,10 @@ class Settings(BaseSettings):
             self.tmp_dir,
             self.logs_dir,
             self.credentials_dir,
+            self.resolved_roblox_db_path.parent,
+            self.resolved_roblox_backups_dir,
+            self.resolved_roblox_reports_dir,
+            self.resolved_roblox_output_dir,
         ):
             path.mkdir(parents=True, exist_ok=True)
 

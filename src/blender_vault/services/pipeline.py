@@ -8,8 +8,10 @@ import uuid
 from pathlib import Path
 from typing import Any, Optional
 
+from ..blender.export_manager import RobloxExportManager
 from ..blender_worker.runner import BlenderWorkerError, BlenderWorkerRunner
 from ..config import STANDARD_CATEGORIES, Settings
+from ..database import ExportFormat, ProductionStatus, RobloxAssetRegistrar
 from ..db import VaultDatabase
 from ..hashing import compute_sha256, slugify_name
 from ..models import (
@@ -29,6 +31,8 @@ from ..models import (
     VisualQAStatus,
     utc_now_iso,
 )
+from ..roblox_qa import RobloxQAEngine, RobloxWorkflowService
+from ..storage.sync_manager import RobloxDriveSyncManager
 from .gdrive_service import GoogleDriveSyncService
 from .qa_rules import evaluate_technical_qa
 from .storage import VaultStorage
@@ -88,6 +92,9 @@ class AssetPipelineService:
         gdrive: GoogleDriveSyncService,
         *,
         benchmark_hook: Optional[Any] = None,
+        roblox_registrar: Optional[RobloxAssetRegistrar] = None,
+        roblox_sync_manager: Optional[RobloxDriveSyncManager] = None,
+        roblox_qa_hook: Optional[Any] = None,
     ) -> None:
         self.settings = settings
         self.db = db
@@ -95,6 +102,32 @@ class AssetPipelineService:
         self.runner = runner
         self.gdrive = gdrive
         self.benchmark_hook = benchmark_hook
+        self.export_manager = RobloxExportManager(runner)
+        self.roblox_qa_hook = roblox_qa_hook
+        if roblox_registrar is not None:
+            self.roblox_registrar = roblox_registrar
+        elif settings.roblox_auto_register:
+            self.roblox_registrar = RobloxAssetRegistrar(settings)
+        else:
+            self.roblox_registrar = None
+        if roblox_sync_manager is not None:
+            self.roblox_sync = roblox_sync_manager
+        elif self.roblox_registrar is not None:
+            self.roblox_sync = RobloxDriveSyncManager(gdrive, self.roblox_registrar.db, db)
+        else:
+            self.roblox_sync = None
+
+        if self.roblox_registrar is not None:
+            self.roblox_workflow: Optional[RobloxWorkflowService] = RobloxWorkflowService(
+                settings,
+                roblox_db=self.roblox_registrar.db,
+                qa_engine=RobloxQAEngine(settings, runner=runner),
+                sync_manager=self.roblox_sync,
+            )
+            if self.roblox_qa_hook is None and settings.roblox_auto_qa:
+                self.roblox_qa_hook = self._default_roblox_qa_hook
+        else:
+            self.roblox_workflow = None
 
     # ------------------------------------------------------------------
     # Procedural Asset Generation
@@ -153,6 +186,24 @@ class AssetPipelineService:
         target_blend = vdir / f"{slug}.blend"
         target_glb = vdir / f"{slug}.glb"
 
+        roblox_rec = None
+        desired_export_fmt = (req.export_format or self.settings.roblox_default_export_format or "FBX").upper()
+        if desired_export_fmt not in {"FBX", "GLB", "OBJ"}:
+            desired_export_fmt = "GLB"
+
+        if self.roblox_registrar is not None:
+            try:
+                roblox_rec = self.roblox_registrar.register_vault_asset(
+                    asset,
+                    variant_name=req.variant_name,
+                    visual_style=req.visual_style,
+                    department_code=req.department_code,
+                    genre_codes=req.genre_codes,
+                    production_status=ProductionStatus.MODELLING,
+                )
+            except Exception as exc:
+                logger.warning("Roblox pre-generation registration failed for %s: %s", asset_id, exc)
+
         try:
             gen_res = self.runner.run_script(
                 "generate.py",
@@ -180,10 +231,53 @@ class AssetPipelineService:
                 version.file_size_bytes = fsize
                 version.sha256 = sha
                 version.md5 = md5
+
+            roblox_export_path: Optional[Path] = target_glb if desired_export_fmt == "GLB" else None
+            if (
+                desired_export_fmt in {"FBX", "OBJ"}
+                and target_blend.is_file()
+                and int(gen_res.get("mesh_object_count", 0)) > 0
+            ):
+                candidate_export = vdir / f"{slug}.{desired_export_fmt.lower()}"
+                try:
+                    self.export_manager.export_and_validate(
+                        blend_path=target_blend,
+                        output_path=candidate_export,
+                        export_format=desired_export_fmt,
+                        work_dir=work_dir / "roblox_export",
+                        verify_roundtrip=False,
+                    )
+                    if candidate_export.is_file():
+                        roblox_export_path = candidate_export
+                        if desired_export_fmt.lower() not in version.file_formats:
+                            version.file_formats.append(desired_export_fmt.lower())
+                except Exception as exp_exc:
+                    logger.warning("Optional Roblox %s export failed for %s: %s", desired_export_fmt, asset_id, exp_exc)
+
             self.db.update_version(version)
+
+            if roblox_rec is not None and self.roblox_registrar is not None:
+                self._update_roblox_generated_files(
+                    roblox_rec.asset_id,
+                    version_num=1,
+                    blend_path=target_blend if target_blend.is_file() else None,
+                    export_path=roblox_export_path if (roblox_export_path and roblox_export_path.is_file()) else (target_glb if target_glb.is_file() else None),
+                    export_format=desired_export_fmt if (roblox_export_path and roblox_export_path.is_file()) else ("GLB" if target_glb.is_file() else None),
+                    sha256=version.sha256,
+                )
 
             self._run_qa_and_visual_stages(asset, version, work_dir, job_id)
             self.db.record_job(job_id=job_id, asset_id=asset_id, version=1, job_type="generate_procedural", status="COMPLETED", stage=version.status.value)
+
+            if roblox_rec is not None and self.roblox_registrar is not None:
+                self._sync_roblox_after_qa(roblox_rec.asset_id, asset, version)
+                if req.sync_to_drive_pending and version.status != AssetStatus.FAILED and self.roblox_sync is not None:
+                    self.roblox_sync.sync_asset_version(
+                        roblox_rec.asset_id,
+                        1,
+                        require_approved_for_production=False,
+                        queue_on_failure=True,
+                    )
         except Exception as exc:
             logger.exception("Procedural generation pipeline failed for %s", asset_id)
             version.status = AssetStatus.FAILED
@@ -200,10 +294,24 @@ class AssetPipelineService:
                 stage=version.failed_stage,
                 error_message=str(exc),
             )
+            if roblox_rec is not None and self.roblox_registrar is not None:
+                try:
+                    self.roblox_registrar.assets.transition_status(
+                        roblox_rec.asset_id,
+                        ProductionStatus.QA_FAILED,
+                        process_name="generation",
+                        message=f"Generation failed: {exc}",
+                        error_details=str(exc),
+                    )
+                except Exception:
+                    pass
         finally:
             self._cleanup_work_dir(work_dir)
 
-        return self.db.get_asset(asset_id) or asset
+        final_asset = self.db.get_asset(asset_id) or asset
+        if roblox_rec is not None:
+            final_asset.roblox_asset_id = roblox_rec.asset_id
+        return final_asset
 
     # ------------------------------------------------------------------
     # Import Existing Model (.blend/.obj/.fbx/.stl/.glb/.gltf)
@@ -357,6 +465,26 @@ class AssetPipelineService:
                 stage=version.status.value,
                 error_message=version.error_message,
             )
+            if self.roblox_registrar is not None:
+                try:
+                    existing_rbx = self.roblox_registrar.assets.get_by_legacy_vault_id(asset.asset_id)
+                    if existing_rbx and version.version > existing_rbx.current_version:
+                        self.roblox_registrar.versions.create_new_version(
+                            existing_rbx.asset_id,
+                            blender_source_path=version.blend_path,
+                            export_format=ExportFormat.GLB if version.glb_path else None,
+                            export_path=version.glb_path,
+                            change_description=f"Imported version v{version.version} ({original_filename})",
+                            sha256=version.sha256,
+                            reset_status=ProductionStatus.QA_PENDING,
+                        )
+                        rbx_rec = self.roblox_registrar.assets.get_asset(existing_rbx.asset_id)
+                    else:
+                        rbx_rec = self.roblox_registrar.register_vault_asset(asset)
+                    if rbx_rec:
+                        self._sync_roblox_after_qa(rbx_rec.asset_id, asset, version)
+                except Exception as rbx_exc:
+                    logger.warning("Roblox import registration failed for %s: %s", asset.asset_id, rbx_exc)
         except Exception as exc:
             logger.exception("Import pipeline failed for %s", asset.asset_id)
             version.status = AssetStatus.FAILED
@@ -376,7 +504,12 @@ class AssetPipelineService:
         finally:
             self._cleanup_work_dir(work_dir)
 
-        return self.db.get_asset(asset.asset_id) or asset
+        final_asset = self.db.get_asset(asset.asset_id) or asset
+        if self.roblox_registrar is not None:
+            rbx = self.roblox_registrar.assets.get_by_legacy_vault_id(asset.asset_id)
+            if rbx:
+                final_asset.roblox_asset_id = rbx.asset_id
+        return final_asset
 
     # ------------------------------------------------------------------
     # Technical QA + Multi-Angle Rendering + Stage 1 Visual QA
@@ -557,6 +690,44 @@ class AssetPipelineService:
         self.db.update_version(version)
         updated_asset = self.db.get_asset(asset_id) or asset
         self.storage.write_version_artifacts(updated_asset, version)
+        if self.roblox_registrar is not None:
+            try:
+                rbx = self.roblox_registrar.assets.get_by_legacy_vault_id(asset_id)
+                if rbx:
+                    updated_asset.roblox_asset_id = rbx.asset_id
+                    if req.decision == HumanApprovalStatus.APPROVED:
+                        if self.roblox_workflow is not None and self.roblox_workflow.qa_reports.get_latest_report_for_asset(rbx.asset_id):
+                            self.roblox_workflow.approve_asset(
+                                rbx.asset_id,
+                                version_number=version_num,
+                                reviewer=version.human_review.reviewer or "Local Reviewer",
+                                notes=version.human_review.notes,
+                                sync_to_drive=False,
+                            )
+                        else:
+                            self.roblox_registrar.versions.mark_version_approved(
+                                rbx.asset_id,
+                                version_num,
+                                approved_by=version.human_review.reviewer or "Local Reviewer",
+                                approved_at=version.human_review.reviewed_at,
+                            )
+                    elif req.decision == HumanApprovalStatus.REJECTED:
+                        if self.roblox_workflow is not None:
+                            self.roblox_workflow.reject_asset(
+                                rbx.asset_id,
+                                version_number=version_num,
+                                reviewer=version.human_review.reviewer or "Local Reviewer",
+                                reason=version.human_review.notes,
+                            )
+                        else:
+                            self.roblox_registrar.assets.transition_status(
+                                rbx.asset_id,
+                                ProductionStatus.REJECTED,
+                                process_name="human_review",
+                                message=f"Rejected by {version.human_review.reviewer}: {version.human_review.notes}",
+                            )
+            except Exception as exc:
+                logger.warning("Failed to mirror human review to Roblox DB for %s: %s", asset_id, exc)
         return updated_asset
 
     # ------------------------------------------------------------------
@@ -617,7 +788,17 @@ class AssetPipelineService:
             raise KeyError(f"Asset '{asset_id}' version v{version_num} not found.")
         if version.status == AssetStatus.FAILED:
             raise ValueError("Cannot upload a FAILED asset version.")
-        return self.gdrive.upload_asset_version(asset, version)
+        updated_ver = self.gdrive.upload_asset_version(asset, version)
+        if self.roblox_registrar is not None:
+            try:
+                rbx = self.roblox_registrar.assets.get_by_legacy_vault_id(asset_id)
+                if rbx:
+                    refreshed = self.db.get_asset(asset_id)
+                    if refreshed:
+                        self.roblox_registrar.sync_vault_asset_metadata(rbx.asset_id, refreshed)
+            except Exception as exc:
+                logger.warning("Failed to mirror Drive upload IDs to Roblox DB for %s: %s", asset_id, exc)
+        return updated_ver
 
     def verify_drive_asset(self, asset_id: str, version_num: int) -> dict[str, Any]:
         version = self.db.get_version(asset_id, version_num)
@@ -629,6 +810,120 @@ class AssetPipelineService:
             return self.gdrive.verify_remote_version_integrity(version, work_dir, self.runner)
         finally:
             self._cleanup_work_dir(work_dir)
+
+    def _update_roblox_generated_files(
+        self,
+        roblox_asset_id: str,
+        *,
+        version_num: int,
+        blend_path: Optional[Path],
+        export_path: Optional[Path],
+        export_format: Optional[str],
+        sha256: Optional[str],
+    ) -> None:
+        if self.roblox_registrar is None:
+            return
+        asset_updates: dict[str, Any] = {}
+        ver_updates: dict[str, Any] = {}
+        if blend_path is not None:
+            asset_updates["source_blend_path"] = str(blend_path)
+            ver_updates["blender_source_path"] = str(blend_path)
+        if export_path is not None:
+            asset_updates["export_path"] = str(export_path)
+            ver_updates["export_path"] = str(export_path)
+        if export_format is not None:
+            asset_updates["export_format"] = export_format
+            ver_updates["export_format"] = export_format
+        if sha256 is not None:
+            ver_updates["sha256"] = sha256
+        if asset_updates:
+            self.roblox_registrar.assets.update_asset(roblox_asset_id, **asset_updates)
+        ver_rec = self.roblox_registrar.versions.get_asset_version(roblox_asset_id, version_num)
+        if ver_rec and ver_updates and not ver_rec.is_approved:
+            self.roblox_registrar.versions.update_version(ver_rec.version_id, **ver_updates)
+        self.roblox_registrar.assets.transition_status(
+            roblox_asset_id,
+            ProductionStatus.QA_PENDING,
+            process_name="generation",
+            message=f"Blender generation finished for v{version_num:03d}; queued for QA.",
+        )
+
+    def _default_roblox_qa_hook(
+        self,
+        roblox_asset_id: str,
+        version_num: int,
+        vault_asset: AssetRecord,
+        vault_version: AssetVersion,
+    ) -> None:
+        if self.roblox_workflow is None:
+            return
+        if not vault_version.blend_path or not Path(vault_version.blend_path).is_file():
+            return
+        self.roblox_workflow.run_qa_for_asset(
+            roblox_asset_id,
+            version_number=version_num,
+            render_previews=True,
+        )
+
+    def _sync_roblox_after_qa(
+        self,
+        roblox_asset_id: str,
+        vault_asset: AssetRecord,
+        vault_version: AssetVersion,
+    ) -> None:
+        if self.roblox_registrar is None:
+            return
+        refreshed = self.db.get_asset(vault_asset.asset_id) or vault_asset
+        self.roblox_registrar.sync_vault_asset_metadata(roblox_asset_id, refreshed)
+
+        if self.roblox_qa_hook is not None:
+            try:
+                self.roblox_qa_hook(roblox_asset_id, vault_version.version, refreshed, vault_version)
+                return
+            except Exception as exc:
+                logger.warning("Roblox QA hook failed for %s: %s", roblox_asset_id, exc)
+
+        if vault_version.status == AssetStatus.FAILED:
+            try:
+                self.roblox_registrar.assets.transition_status(
+                    roblox_asset_id,
+                    ProductionStatus.QA_FAILED,
+                    process_name="technical_qa",
+                    message=vault_version.error_message or "Technical QA failed.",
+                    error_details=vault_version.error_message,
+                )
+            except Exception:
+                pass
+        elif vault_version.status == AssetStatus.AWAITING_HUMAN_APPROVAL:
+            try:
+                cur = self.roblox_registrar.assets.get_asset(roblox_asset_id)
+                if cur and cur.production_status == ProductionStatus.QA_PENDING:
+                    self.roblox_registrar.assets.transition_status(
+                        roblox_asset_id,
+                        ProductionStatus.QA_RUNNING,
+                        process_name="technical_qa",
+                        message="Branch 1 Technical QA running.",
+                    )
+                    self.roblox_registrar.assets.transition_status(
+                        roblox_asset_id,
+                        ProductionStatus.QA_PASSED,
+                        process_name="technical_qa",
+                        message="Branch 1 Technical QA passed.",
+                    )
+                    self.roblox_registrar.assets.transition_status(
+                        roblox_asset_id,
+                        ProductionStatus.AWAITING_HUMAN_APPROVAL,
+                        process_name="technical_qa",
+                        message="Awaiting human approval.",
+                    )
+                    ver_rec = self.roblox_registrar.versions.get_asset_version(roblox_asset_id, vault_version.version)
+                    if ver_rec and not ver_rec.is_approved:
+                        self.roblox_registrar.versions.update_version(
+                            ver_rec.version_id,
+                            qa_status="AWAITING_HUMAN_APPROVAL",
+                        )
+            except Exception as exc:
+                logger.warning("Roblox status transition error for %s: %s", roblox_asset_id, exc)
 
     @staticmethod
     def _cleanup_work_dir(work_dir: Path) -> None:

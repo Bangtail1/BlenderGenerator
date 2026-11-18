@@ -1,0 +1,227 @@
+{
+  "schema_version": "1.0",
+  "scoring_weights": {
+    "mesh_integrity": 15.0,
+    "geometry_topology": 10.0,
+    "polygon_efficiency": 10.0,
+    "uv_quality": 10.0,
+    "materials_textures": 10.0,
+    "proportions_scale": 10.0,
+    "roblox_compatibility": 15.0,
+    "collision_usability": 5.0,
+    "visual_quality": 10.0,
+    "organisation_naming": 5.0
+  },
+  "grade_thresholds": {
+    "A": 90.0,
+    "B": 80.0,
+    "C": 70.0,
+    "D": 0.0
+  },
+  "minimum_passing_score": 80.0,
+  "roblox_limits": {
+    "max_tris_per_mesh_part": 20000,
+    "max_texture_dimension": 1024,
+    "min_texture_dimension": 64,
+    "supported_export_formats": ["FBX", "GLB", "OBJ"],
+    "studs_per_meter": 3.57142857,
+    "require_applied_scale": true,
+    "max_uv_coordinate_abs": 4.0,
+    "standard_uv_range": [0.0, 1.0]
+  },
+  "budget_tiers": {
+    "tiny_prop": {
+      "min_tris": 12,
+      "optimal_min_tris": 50,
+      "optimal_max_tris": 500,
+      "warning_max_tris": 1000,
+      "hard_max_tris": 2000,
+      "expected_max_dim_m": [0.02, 0.6],
+      "collision_required": false,
+      "recommended_collision": "Box"
+    },
+    "small_prop": {
+      "min_tris": 24,
+      "optimal_min_tris": 300,
+      "optimal_max_tris": 1500,
+      "warning_max_tris": 3500,
+      "hard_max_tris": 6000,
+      "expected_max_dim_m": [0.08, 1.5],
+      "collision_required": false,
+      "recommended_collision": "Hull"
+    },
+    "medium_prop": {
+      "min_tris": 40,
+      "optimal_min_tris": 500,
+      "optimal_max_tris": 4000,
+      "warning_max_tris": 10000,
+      "hard_max_tris": 18000,
+      "expected_max_dim_m": [0.2, 3.0],
+      "collision_required": false,
+      "recommended_collision": "Hull"
+    },
+    "large_prop": {
+      "min_tris": 100,
+      "optimal_min_tris": 1000,
+      "optimal_max_tris": 8000,
+      "warning_max_tris": 20000,
+      "hard_max_tris": 35000,
+      "expected_max_dim_m": [0.35, 8.0],
+      "collision_required": false,
+      "recommended_collision": "Default"
+    },
+    "building": {
+      "min_tris": 100,
+      "optimal_min_tris": 3000,
+      "optimal_max_tris": 15000,
+      "warning_max_tris": 35000,
+      "hard_max_tris": 60000,
+      "expected_max_dim_m": [1.5, 60.0],
+      "collision_required": true,
+      "recommended_collision": "PreciseConvexDecomposition"
+    },
+    "vehicle": {
+      "min_tris": 200,
+      "optimal_min_tris": 3000,
+      "optimal_max_tris": 12000,
+      "warning_max_tris": 25000,
+      "hard_max_tris": 45000,
+      "expected_max_dim_m": [1.2, 18.0],
+      "collision_required": false,
+      "recommended_collision": "Hull"
+    },
+    "character": {
+      "min_tris": 200,
+      "optimal_min_tris": 3000,
+      "optimal_max_tris": 20000,
+      "warning_max_tris": 32000,
+      "hard_max_tris": 50000,
+      "expected_max_dim_m": [0.5, 4.0],
+      "collision_required": false,
+      "recommended_collision": "Box"
+    }
+  },
+  "department_rules": {
+    "FUR": {
+      "tier": "large_prop",
+      "allow_open_boundary": false,
+      "allow_multi_part": true,
+      "require_uv": true,
+      "require_pbr_maps": false,
+      "allow_procedural_materials": true,
+      "expected_height_m": [0.25, 3.0],
+      "recommended_collision": "Hull"
+    },
+    "ENV": {
+      "tier": "large_prop",
+      "allow_open_boundary": true,
+      "allow_multi_part": true,
+      "require_uv": true,
+      "require_pbr_maps": false,
+      "allow_procedural_materials": true,
+      "expected_height_m": [0.1, 35.0],
+      "recommended_collision": "Hull"
+    },
+    "VEH": {
+      "tier": "vehicle",
+      "allow_open_boundary": false,
+      "allow_multi_part": true,
+      "require_uv": true,
+      "require_pbr_maps": false,
+      "allow_procedural_materials": true,
+      "expected_height_m": [0.6, 8.0],
+      "recommended_collision": "Hull"
+    },
+    "WPN": {
+      "tier": "small_prop",
+      "allow_open_boundary": false,
+      "allow_multi_part": true,
+      "require_uv": true,
+      "require_pbr_maps": false,
+      "allow_procedural_materials": true,
+      "expected_height_m": [0.05, 2.8],
+      "recommended_collision": "Box"
+    },
+    "ARC": {
+      "tier": "building",
+      "allow_open_boundary": true,
+      "allow_multi_part": true,
+      "require_uv": true,
+      "require_pbr_maps": false,
+      "allow_procedural_materials": true,
+      "expected_height_m": [0.2, 40.0],
+      "recommended_collision": "PreciseConvexDecomposition"
+    },
+    "BLD": {
+      "tier": "building",
+      "allow_open_boundary": true,
+      "allow_multi_part": true,
+      "require_uv": true,
+      "require_pbr_maps": false,
+      "allow_procedural_materials": true,
+      "expected_height_m": [2.0, 80.0],
+      "recommended_collision": "PreciseConvexDecomposition"
+    },
+    "PRP": {
+      "tier": "medium_prop",
+      "allow_open_boundary": false,
+      "allow_multi_part": true,
+      "require_uv": true,
+      "require_pbr_maps": false,
+      "allow_procedural_materials": true,
+      "expected_height_m": [0.05, 6.0],
+      "recommended_collision": "Hull"
+    },
+    "HSH": {
+      "tier": "small_prop",
+      "allow_open_boundary": false,
+      "allow_multi_part": true,
+      "require_uv": true,
+      "require_pbr_maps": false,
+      "allow_procedural_materials": true,
+      "expected_height_m": [0.05, 2.5],
+      "recommended_collision": "Hull"
+    },
+    "CHR": {
+      "tier": "character",
+      "allow_open_boundary": true,
+      "allow_multi_part": true,
+      "require_uv": true,
+      "require_pbr_maps": false,
+      "allow_procedural_materials": true,
+      "expected_height_m": [0.8, 3.5],
+      "recommended_collision": "Box"
+    },
+    "MEC": {
+      "tier": "medium_prop",
+      "allow_open_boundary": false,
+      "allow_multi_part": true,
+      "require_uv": false,
+      "require_pbr_maps": false,
+      "allow_procedural_materials": true,
+      "expected_height_m": [0.05, 8.0],
+      "recommended_collision": "Hull"
+    },
+    "DEC": {
+      "tier": "small_prop",
+      "allow_open_boundary": true,
+      "allow_multi_part": true,
+      "require_uv": true,
+      "require_pbr_maps": false,
+      "allow_procedural_materials": true,
+      "expected_height_m": [0.05, 6.0],
+      "recommended_collision": "Box"
+    },
+    "CAL": {
+      "tier": "small_prop",
+      "min_tris": 12,
+      "allow_open_boundary": false,
+      "allow_multi_part": true,
+      "require_uv": true,
+      "require_pbr_maps": false,
+      "allow_procedural_materials": true,
+      "expected_height_m": [0.1, 5.0],
+      "recommended_collision": "Box"
+    }
+  }
+}

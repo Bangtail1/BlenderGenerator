@@ -310,6 +310,7 @@ class AssetRecord(BaseModel):
     tags: list[str] = Field(default_factory=list)
     provenance: ProvenanceInfo
     current_version: int = 1
+    roblox_asset_id: Optional[str] = None
     created_at: str = Field(default_factory=utc_now_iso)
     updated_at: str = Field(default_factory=utc_now_iso)
     latest: Optional[AssetVersion] = None
@@ -340,6 +341,12 @@ class GenerateAssetRequest(BaseModel):
     template_id: Optional[str] = None
     geometry_profile: Optional[GeometryProfile] = None
     params: dict[str, Any] = Field(default_factory=dict)
+    visual_style: str = "LP"
+    variant_name: str = "Basic"
+    department_code: Optional[str] = None
+    genre_codes: list[str] = Field(default_factory=list)
+    export_format: Optional[str] = None
+    sync_to_drive_pending: bool = False
 
 
 class HumanReviewRequest(BaseModel):

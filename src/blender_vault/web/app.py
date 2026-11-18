@@ -39,6 +39,8 @@ from ..reference.reference_drive_sync import ReferenceDriveSyncService
 from ..reference.reference_storage import ReferenceStorage
 from ..reference.router import build_reference_router
 from ..reference.scheduler import DailyCollectionScheduler
+from ..roblox_qa import RobloxQAEngine, RobloxWorkflowService
+from ..roblox_qa.router import build_roblox_router
 from ..services.desktop import launch_in_blender_gui
 from ..services.gdrive_service import (
     DriveIntegrityError,
@@ -127,8 +129,15 @@ def create_app(
     app.state.ref_scheduler = ref_scheduler
     app.state.ref_dashboard = ref_dashboard
     app.state.benchmark_engine = benchmark_engine
+    app.state.roblox_registrar = pipeline.roblox_registrar
+    app.state.roblox_sync = pipeline.roblox_sync
+    app.state.roblox_workflow = pipeline.roblox_workflow or RobloxWorkflowService(
+        cfg,
+        qa_engine=RobloxQAEngine(cfg, runner=runner),
+    )
 
     app.include_router(build_reference_router(app.state))
+    app.include_router(build_roblox_router(app.state))
 
     STATIC_DIR.mkdir(parents=True, exist_ok=True)
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
