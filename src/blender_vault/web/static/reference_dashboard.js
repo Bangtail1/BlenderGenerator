@@ -48,10 +48,14 @@ export function createReferenceDashboard({ api, escapeHtml, badge, showFeedback,
     const sched = ov.schedule || {};
     const latest = ov.latest_cycle || null;
     const cycles = ov.recent_cycles || [];
+    const notifications = ov.notifications || [];
+    const winTask = ov.windows_task_scheduler || {};
     const apiOk = conn.connected === true;
     const connBadge = conn.configured
       ? (apiOk ? badge("Connected", "VERIFIED") : badge(conn.connected === false ? "Disconnected" : "Configured (Check Live)", "PENDING"))
       : badge("BLENDSWAP_KEY Unset", "FAIL");
+    const schedState = sched.scheduler_state || (sched.enabled ? "SCHEDULED" : "PAUSED");
+    const schedBadgeTone = schedState === "PAUSED" ? "PENDING" : (schedState.startsWith("POSTPONED") ? "PENDING" : "PASS");
 
     const cycleRows = cycles
       .map(
@@ -64,6 +68,25 @@ export function createReferenceDashboard({ api, escapeHtml, badge, showFeedback,
           <td class="small muted">${escapeHtml(c.shortage_reason || c.error_message || c.trigger_type)}</td>
         </tr>`
       )
+      .join("");
+
+    const notifRows = notifications
+      .slice(0, 8)
+      .map((n) => {
+        const assetSummary = (n.assets_selected || [])
+          .map((a) => `#${a.blendswap_id} ${a.title} (${a.status})`)
+          .join(", ");
+        const errText = (n.errors || []).join("; ");
+        return `<tr>
+          <td>${badge(n.status, n.status === "COMPLETED" ? "PASS" : (n.status.includes("FAIL") || n.status.includes("UNAVAILABLE") ? "FAIL" : "PENDING"))}</td>
+          <td class="small">${escapeHtml((n.scheduled_time || "—").replace("T", " ").slice(0, 19))}</td>
+          <td class="small">${escapeHtml((n.started_at || "—").replace("T", " ").slice(0, 19))} → ${escapeHtml((n.completed_at || "—").replace("T", " ").slice(0, 19))}</td>
+          <td>${n.downloaded_count} / ${n.failed_count} failed</td>
+          <td>${n.free_allowance_remaining ?? "—"}</td>
+          <td class="small muted">${escapeHtml(assetSummary || n.message || "—")}${errText ? `<br/><span style="color:#f87171">${escapeHtml(errText)}</span>` : ""}</td>
+          <td class="small">${escapeHtml((n.next_scheduled_run || "—").replace("T", " ").slice(0, 19))}</td>
+        </tr>`;
+      })
       .join("");
 
     document.getElementById("refpanel-overview").innerHTML = `
@@ -84,9 +107,9 @@ export function createReferenceDashboard({ api, escapeHtml, badge, showFeedback,
           <span class="kpi-sub">${escapeHtml(conn.error || `API calls logged: ${ov.api_usage?.total_calls || 0}`)}</span>
         </div>
         <div class="kpi-card">
-          <span class="kpi-label">Next Scheduled Cycle</span>
+          <span class="kpi-label">Next Scheduled Run</span>
           <span class="kpi-val" style="font-size:1.0rem">${escapeHtml((ov.next_collection_cycle || "").replace("T", " ").slice(0, 19))}</span>
-          <span class="kpi-sub">${escapeHtml(sched.timezone)} @ ${escapeHtml(sched.schedule_time)} (${sched.enabled ? "Enabled" : "Paused"})</span>
+          <span class="kpi-sub">${badge(schedState, schedBadgeTone)} ${escapeHtml(sched.timezone)} @ ${escapeHtml(sched.collection_time || sched.schedule_time)}</span>
         </div>
       </div>
 
@@ -96,7 +119,7 @@ export function createReferenceDashboard({ api, escapeHtml, badge, showFeedback,
           <p class="small muted">Runs discovery (<code>sort=downloads</code>), diversity selection, free allowance verification, Blender inspection, 100-pt grading, and Drive backup without spending credits.</p>
           <div class="action-row">
             <button class="btn btn-primary" id="btn-ref-check-live">Check Live BlendSwap API</button>
-            <button class="btn btn-secondary" id="btn-ref-run-cycle">Run Daily Cycle Now</button>
+            <button class="btn btn-secondary" id="btn-ref-run-cycle">Run Collection Now</button>
             <button class="btn btn-ghost" id="btn-ref-sync-drive">Sync Pending to Drive</button>
             <button class="btn btn-ghost" id="btn-ref-reindex">Re-index Reference JSONs</button>
           </div>
@@ -105,20 +128,60 @@ export function createReferenceDashboard({ api, escapeHtml, badge, showFeedback,
         </div>
 
         <div class="panel-card">
-          <h3>Scheduler Settings</h3>
+          <h3>Scheduler Settings &amp; Reset Detection</h3>
           <div class="form-row">
-            <label><span>Daily Time (24h)</span><input type="text" id="sched-time-input" value="${escapeHtml(sched.schedule_time || "02:00")}" /></label>
+            <label><span>Daily Time (24h)</span><input type="text" id="sched-time-input" value="${escapeHtml(sched.collection_time || sched.schedule_time || "03:00")}" /></label>
             <label><span>Timezone</span><input type="text" id="sched-tz-input" value="${escapeHtml(sched.timezone || "Europe/London")}" /></label>
+            <label><span>Daily Target</span><input type="number" min="1" max="50" id="sched-target-input" value="${sched.target_downloads ?? sched.daily_target ?? 7}" /></label>
           </div>
-          <label class="checkbox-inline">
-            <input type="checkbox" id="sched-enabled-input" ${sched.enabled ? "checked" : ""} />
-            <span>Enable automated daily collection scheduler</span>
-          </label>
+          <div class="form-row">
+            <label class="checkbox-inline">
+              <input type="checkbox" id="sched-enabled-input" ${sched.enabled ? "checked" : ""} />
+              <span>Enable automatic collection</span>
+            </label>
+            <label class="checkbox-inline">
+              <input type="checkbox" id="sched-resume-missed-input" ${sched.resume_missed_jobs !== false ? "checked" : ""} />
+              <span>Resume missed runs on startup</span>
+            </label>
+          </div>
           <div class="action-row">
-            <button class="btn btn-secondary" id="btn-save-sched">Save Schedule</button>
+            <button class="btn btn-secondary" id="btn-save-sched">Save Collection Time</button>
+            <button class="btn btn-ghost" id="btn-pause-sched" ${!sched.enabled ? "disabled" : ""}>Pause Automatic Collection</button>
+            <button class="btn btn-ghost" id="btn-resume-sched" ${sched.enabled ? "disabled" : ""}>Resume Automatic Collection</button>
           </div>
           <div id="ref-sched-msg" class="feedback hidden"></div>
+          <div class="small muted">
+            State: <strong>${escapeHtml(schedState)}</strong> · Next Daily: <code>${escapeHtml((sched.next_daily_run_at || "").replace("T", " ").slice(0, 19))}</code>
+            ${sched.next_recheck_at ? ` · Reset Recheck: <code>${escapeHtml(sched.next_recheck_at.replace("T", " ").slice(0, 19))}</code>` : ""}
+            ${sched.allowance_reset_detected_at ? ` · Last Reset Detected: <code>${escapeHtml(sched.allowance_reset_detected_at.replace("T", " ").slice(0, 19))}</code>` : ""}
+            ${sched.postponed_reason ? `<br/>Postponed: ${escapeHtml(sched.postponed_reason)}` : ""}
+          </div>
         </div>
+      </div>
+
+      <div class="panel-card">
+        <h3>Persistent OS Scheduling (Windows Task Scheduler)</h3>
+        <div class="small muted">
+          Status: ${winTask.installed ? badge(winTask.status || "Ready", "PASS") : badge(winTask.status || "Not Installed", "PENDING")}
+          · Task: <code>${escapeHtml(winTask.task_name || "BlenderAssetVault-ReferenceDailyCollection")}</code>
+          ${winTask.next_run_time ? ` · Windows Next Run: <strong>${escapeHtml(winTask.next_run_time)}</strong>` : ""}
+          <br/>Command: <code>${escapeHtml(winTask.command || "python -m blender_vault.cli collect-daily --scheduled")}</code>
+          <br/>Runs locally on Windows even when Antigravity IDE is closed. Does not execute while the PC is powered off; missed 03:00 windows and interrupted queues resume automatically when Windows starts.
+        </div>
+        <div class="action-row" style="margin-top:8px">
+          <button class="btn btn-secondary" id="btn-win-task-install" ${winTask.supported_os === false ? "disabled" : ""}>Install / Update Windows Task</button>
+          <button class="btn btn-ghost" id="btn-win-task-uninstall" ${winTask.supported_os === false ? "disabled" : ""}>Uninstall Windows Task</button>
+        </div>
+        <div id="ref-wintask-msg" class="feedback hidden"></div>
+      </div>
+
+      <div class="panel-card">
+        <h3>Scheduler Notifications &amp; Telemetry (${notifications.length})</h3>
+        ${
+          notifications.length
+            ? `<table class="qa-table"><thead><tr><th>Status</th><th>Scheduled Time</th><th>Actual Start → Completed</th><th>Downloads / Failed</th><th>Allowance Left</th><th>Selected Assets &amp; Errors</th><th>Next Scheduled</th></tr></thead><tbody>${notifRows}</tbody></table>`
+            : `<p class="small muted">No scheduler events logged yet.</p>`
+        }
       </div>
 
       <div class="panel-card">
@@ -126,7 +189,7 @@ export function createReferenceDashboard({ api, escapeHtml, badge, showFeedback,
         ${
           cycles.length
             ? `<table class="qa-table"><thead><tr><th>Date</th><th>Status</th><th>Downloaded</th><th>Failed</th><th>Credits Spent</th><th>Notes</th></tr></thead><tbody>${cycleRows}</tbody></table>`
-            : `<p class="small muted">No collection cycles executed yet. Add <code>BLENDSWAP_KEY</code> to <code>.env</code> and click <strong>Run Daily Cycle Now</strong>.</p>`
+            : `<p class="small muted">No collection cycles executed yet. Add <code>BLENDSWAP_KEY</code> to <code>.env</code> and click <strong>Run Collection Now</strong>.</p>`
         }
       </div>
     `;
@@ -168,12 +231,54 @@ export function createReferenceDashboard({ api, escapeHtml, badge, showFeedback,
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            schedule_time: document.getElementById("sched-time-input").value.trim(),
+            collection_time: document.getElementById("sched-time-input").value.trim(),
             timezone: document.getElementById("sched-tz-input").value.trim(),
+            target_downloads: Number(document.getElementById("sched-target-input").value || 7),
             enabled: document.getElementById("sched-enabled-input").checked,
+            resume_missed_jobs: document.getElementById("sched-resume-missed-input").checked,
           }),
         });
         showFeedback(msg, "Daily scheduler settings saved.", "ok");
+        await loadDashboard();
+      } catch (e) {
+        showFeedback(msg, e.message, "err");
+      }
+    });
+    document.getElementById("btn-pause-sched").addEventListener("click", async () => {
+      const msg = document.getElementById("ref-sched-msg");
+      try {
+        await api("/api/reference/scheduler/pause", { method: "POST" });
+        showFeedback(msg, "Automatic daily collection paused.", "ok");
+        await loadDashboard();
+      } catch (e) {
+        showFeedback(msg, e.message, "err");
+      }
+    });
+    document.getElementById("btn-resume-sched").addEventListener("click", async () => {
+      const msg = document.getElementById("ref-sched-msg");
+      try {
+        await api("/api/reference/scheduler/resume", { method: "POST" });
+        showFeedback(msg, "Automatic daily collection resumed.", "ok");
+        await loadDashboard();
+      } catch (e) {
+        showFeedback(msg, e.message, "err");
+      }
+    });
+    document.getElementById("btn-win-task-install").addEventListener("click", async () => {
+      const msg = document.getElementById("ref-wintask-msg");
+      try {
+        const res = await api("/api/reference/scheduler/windows-task/install", { method: "POST" });
+        showFeedback(msg, res.message || "Windows Task updated.", res.installed ? "ok" : "err");
+        await loadDashboard();
+      } catch (e) {
+        showFeedback(msg, e.message, "err");
+      }
+    });
+    document.getElementById("btn-win-task-uninstall").addEventListener("click", async () => {
+      const msg = document.getElementById("ref-wintask-msg");
+      try {
+        const res = await api("/api/reference/scheduler/windows-task/uninstall", { method: "POST" });
+        showFeedback(msg, res.message || "Windows Task removed.", res.uninstalled ? "ok" : "err");
         await loadDashboard();
       } catch (e) {
         showFeedback(msg, e.message, "err");

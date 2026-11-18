@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import shutil
 import tarfile
 import uuid
@@ -23,6 +24,16 @@ SUPPORTED_3D_EXTENSIONS = (".blend", ".glb", ".gltf", ".fbx", ".obj", ".stl")
 MAX_ARCHIVE_MEMBERS = 1000
 MAX_ARCHIVE_EXTRACTED_BYTES = 512 * 1024 * 1024  # 512 MiB
 _COPY_CHUNK_BYTES = 64 * 1024
+
+
+def _safe_float(value: Any, default: float = 0.0) -> float:
+    if value is None:
+        return default
+    try:
+        f = float(value)
+        return f if math.isfinite(f) else default
+    except (TypeError, ValueError):
+        return default
 
 
 def _copy_stream_with_budget(
@@ -207,6 +218,52 @@ class ReferenceInspectorService:
         self.settings = settings
         self.runner = runner
 
+    def resolve_blend_for_gui(self, *, source_file: Path, blendswap_id: int) -> Path:
+        """Return a launchable local .blend file, safely unpacking archive references when needed."""
+        if not source_file.is_file():
+            raise FileNotFoundError(f"Reference file missing on disk: {source_file}")
+
+        ext = source_file.suffix.lower()
+        if ext == ".blend":
+            return source_file.resolve()
+
+        if ext == ".zip" or ext in {".tar", ".gz", ".tgz"} or source_file.name.lower().endswith(".tar.gz"):
+            open_dir = (self.settings.tmp_dir / "open_blender" / str(blendswap_id)).resolve()
+            if open_dir.is_dir():
+                cached_blends = sorted(
+                    p
+                    for p in open_dir.rglob("*")
+                    if p.is_file() and not p.name.startswith(".") and p.suffix.lower() == ".blend"
+                )
+                if cached_blends:
+                    return cached_blends[0].resolve()
+            else:
+                open_dir.mkdir(parents=True, exist_ok=True)
+
+            if ext == ".zip":
+                _safe_extract_zip(source_file, open_dir)
+            else:
+                _safe_extract_tar(source_file, open_dir)
+
+            blend_matches = sorted(
+                p
+                for p in open_dir.rglob("*")
+                if p.is_file() and not p.name.startswith(".") and p.suffix.lower() == ".blend"
+            )
+            if blend_matches:
+                return blend_matches[0].resolve()
+
+            found_3d = _locate_primary_3d_file(open_dir)
+            if found_3d:
+                raise FileNotFoundError(
+                    f"Archive contains '{found_3d.name}' ({found_3d.suffix}) rather than a native .blend file."
+                )
+            raise FileNotFoundError(f"Archive '{source_file.name}' does not contain a .blend file.")
+
+        raise FileNotFoundError(
+            f"Format '{source_file.suffix}' cannot be opened directly in Blender GUI without conversion."
+        )
+
     def inspect_asset_file(
         self,
         *,
@@ -315,9 +372,9 @@ class ReferenceInspectorService:
                 zero_area_faces=int(raw.get("zero_area_faces", 0)),
                 duplicate_verts=int(raw.get("duplicate_verts", 0)),
                 inverted_normals_count=int(raw.get("inverted_normals_count", 0)),
-                mesh_density_tris_per_m3=float(raw.get("mesh_density_tris_per_m3", 0.0)),
-                surface_area=float(raw.get("surface_area", 0.0)),
-                dimensions=[float(x) for x in raw.get("dimensions", [0.0, 0.0, 0.0])],
+                mesh_density_tris_per_m3=_safe_float(raw.get("mesh_density_tris_per_m3", 0.0)),
+                surface_area=_safe_float(raw.get("surface_area", 0.0)),
+                dimensions=[_safe_float(x, 0.0) for x in (raw.get("dimensions") or [0.0, 0.0, 0.0])],
                 quad_count=int(raw.get("quad_count", 0)),
                 tri_face_count=int(raw.get("tri_face_count", 0)),
                 ngon_count=int(raw.get("ngon_count", 0)),

@@ -154,10 +154,36 @@ def test_complete_end_to_end_15_scenarios_via_api_and_workflow(tmp_path: Path) -
             assert after_sync["asset"]["google_drive_file_id"] is not None
             assert after_sync["asset"]["google_drive_folder_id"] is not None
             assert after_sync["asset"]["google_drive_url"] is not None
+            # Studio verification starts PENDING until explicitly performed by a human
+            assert after_sync["versions"][0]["studio_verification_status"] == "PENDING"
             # Verify report JSON refreshed with APPROVED state
             approved_json = json.loads(json_rep_path.read_text(encoding="utf-8"))
             assert approved_json["final_approval_status"] == "APPROVED"
             assert approved_json["human_approved"] is True
+            assert approved_json["roblox_studio_verification_status"] == "PENDING"
+
+            # Re-running QA directly on an already APPROVED version v1 must fail BEFORE mutating production_status
+            re_qa_resp = client.post(f"/api/roblox/assets/{rbx_id}/qa", json={"version_number": 1})
+            assert re_qa_resp.status_code == 400
+            assert client.get(f"/api/roblox/assets/{rbx_id}").json()["asset"]["production_status"] == "APPROVED"
+
+            # Record actual manual Roblox Studio verification on v1 via API -> updates DB & report
+            sv_resp = client.post(
+                f"/api/roblox/assets/{rbx_id}/studio-verify",
+                json={
+                    "version_number": 1,
+                    "verified_by": "Azlan",
+                    "fbx_import_ok": True,
+                    "orientation_ok": True,
+                    "scale_ok": True,
+                    "material_appearance_ok": True,
+                    "collision_test_ok": True,
+                    "notes": "Tested in Studio R15 starter place.",
+                },
+            )
+            assert sv_resp.status_code == 200, sv_resp.text
+            assert sv_resp.json()["studio_verification"]["status"] == "PASSED"
+            assert json.loads(json_rep_path.read_text(encoding="utf-8"))["roblox_studio_verification_status"] == "PASSED"
 
             # TEST 12: Modify the chair and create a new version (v2) without overwriting approved v1!
             v2_blend = tmp_path / "walnut_chair_v2.blend"
@@ -220,7 +246,39 @@ def test_complete_end_to_end_15_scenarios_via_api_and_workflow(tmp_path: Path) -
             assert bad_app.status_code == 400
             assert client.get(f"/api/roblox/assets/{bad_rbx_id}").json()["asset"]["human_approved"] is False
 
-            # DB integrity check clean after all 15 scenarios
+            # Rejected v3 on approved chair remains preserved without overwriting v1/v2 or entering Approved Assets
+            v3_created = wf.create_modified_version(
+                rbx_id,
+                new_blend_path=v2_blend,
+                change_description="Experimental variant for rejection test",
+                export_format="FBX",
+            )
+            assert v3_created["version"].version_number == 3
+            v3_qa = client.post(
+                f"/api/roblox/assets/{rbx_id}/qa",
+                json={"version_number": 3, "render_previews": False},
+            )
+            assert v3_qa.status_code == 200
+            rej_resp = client.post(
+                f"/api/roblox/assets/{rbx_id}/reject",
+                json={"version_number": 3, "reviewer": "Azlan", "reason": "Style mismatch"},
+            )
+            assert rej_resp.status_code == 200
+            assert rej_resp.json()["asset"]["production_status"] == "REJECTED"
+            with pytest.raises(ValueError):
+                app.state.roblox_sync.sync_asset_version(
+                    rbx_id,
+                    3,
+                    require_approved_for_production=True,
+                    queue_on_failure=False,
+                )
+            # Approved v1 & v2 remain intact and preserved
+            v1_final = wf.versions.get_asset_version(rbx_id, 1)
+            v2_final = wf.versions.get_asset_version(rbx_id, 2)
+            assert v1_final.is_approved is True and v2_final.is_approved is True
+            assert Path(v2_final.blender_source_path).is_file()
+
+            # DB integrity check clean after all scenarios
             health = client.get("/api/roblox/health").json()
             assert health["status"] == "ok"
             assert health["integrity"]["ok"] is True

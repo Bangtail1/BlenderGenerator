@@ -7,7 +7,7 @@ import sys
 import traceback
 from collections import deque
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 SCRIPTS_DIR = Path(__file__).resolve().parent
 if str(SCRIPTS_DIR) not in sys.path:
@@ -138,6 +138,70 @@ def _component_face_counts(bm: bmesh.types.BMesh) -> list[int]:
     return sorted(comp_faces, reverse=True)
 
 
+def _point_in_tri_strict_2d(
+    p: tuple[float, float],
+    a: tuple[float, float],
+    b: tuple[float, float],
+    c: tuple[float, float],
+) -> bool:
+    """Return True if 2D point p lies strictly inside triangle (a, b, c) via barycentric coordinates."""
+    v0x, v0y = c[0] - a[0], c[1] - a[1]
+    v1x, v1y = b[0] - a[0], b[1] - a[1]
+    v2x, v2y = p[0] - a[0], p[1] - a[1]
+    denom = v0x * v1y - v1x * v0y
+    if abs(denom) <= 1e-12:
+        return False
+    u = (v2x * v1y - v1x * v2y) / denom
+    v = (v0x * v2y - v2x * v0y) / denom
+    return u > 0.02 and v > 0.02 and (u + v) < 0.98
+
+
+def _rasterize_tri_cells(
+    p0: tuple[float, float],
+    p1: tuple[float, float],
+    p2: tuple[float, float],
+    grid_size: int,
+) -> set[int]:
+    """Rasterize a 2D UV triangle onto a grid_size x grid_size unit-[0,1] cell set."""
+    mapped: list[tuple[float, float]] = []
+    for u, v in (p0, p1, p2):
+        wu = u % 1.0 if (u > 1.0 or u < 0.0) else u
+        wv = v % 1.0 if (v > 1.0 or v < 0.0) else v
+        mapped.append((max(0.0, min(0.9999, wu)), max(0.0, min(0.9999, wv))))
+
+    a, b, c = mapped
+    cells: set[int] = set()
+    cx_cent = int(((a[0] + b[0] + c[0]) / 3.0) * grid_size)
+    cy_cent = int(((a[1] + b[1] + c[1]) / 3.0) * grid_size)
+    cells.add(cy_cent * grid_size + cx_cent)
+    for px, py in mapped:
+        cells.add(int(py * grid_size) * grid_size + int(px * grid_size))
+
+    min_x = int(min(a[0], b[0], c[0]) * grid_size)
+    max_x = int(max(a[0], b[0], c[0]) * grid_size)
+    min_y = int(min(a[1], b[1], c[1]) * grid_size)
+    max_y = int(max(a[1], b[1], c[1]) * grid_size)
+    if (max_x - min_x) <= 1 and (max_y - min_y) <= 1:
+        return cells
+
+    def _sign(px: float, py: float, p1x: float, p1y: float, p2x: float, p2y: float) -> float:
+        return (px - p2x) * (p1y - p2y) - (p1x - p2x) * (py - p2y)
+
+    inv_g = 1.0 / grid_size
+    for cy in range(min_y, max_y + 1):
+        py = (cy + 0.5) * inv_g
+        for cx in range(min_x, max_x + 1):
+            px = (cx + 0.5) * inv_g
+            d1 = _sign(px, py, a[0], a[1], b[0], b[1])
+            d2 = _sign(px, py, b[0], b[1], c[0], c[1])
+            d3 = _sign(px, py, c[0], c[1], a[0], a[1])
+            has_neg = (d1 < -1e-7) or (d2 < -1e-7) or (d3 < -1e-7)
+            has_pos = (d1 > 1e-7) or (d2 > 1e-7) or (d3 > 1e-7)
+            if not (has_neg and has_pos):
+                cells.add(cy * grid_size + cx)
+    return cells
+
+
 def _analyze_uvs(bm: bmesh.types.BMesh, grid_size: int = 64) -> dict[str, Any]:
     uv_layer = bm.loops.layers.uv.active
     face_count = len(bm.faces)
@@ -150,7 +214,12 @@ def _analyze_uvs(bm: bmesh.types.BMesh, grid_size: int = 64) -> dict[str, Any]:
             "out_of_unit_range_loops": 0,
             "extreme_uv_loops": 0,
             "overlap_cell_ratio": 0.0,
+            "self_overlap_cell_ratio": 0.0,
             "coverage_ratio": 0.0,
+            "uv_island_count": 0,
+            "flipped_uv_faces": 0,
+            "stacked_island_pairs": 0,
+            "uv_layout_mode": "MISSING",
         }
 
     mapped_faces = 0
@@ -158,11 +227,12 @@ def _analyze_uvs(bm: bmesh.types.BMesh, grid_size: int = 64) -> dict[str, Any]:
     invalid_coords = 0
     out_of_unit = 0
     extreme_uv = 0
+    flipped_uv_faces = 0
 
     for face in bm.faces:
         pts = [lp[uv_layer].uv for lp in face.loops]
         bad_face = False
-        area = 0.0
+        area2 = 0.0
         for i, uv in enumerate(pts):
             if math.isnan(uv.x) or math.isnan(uv.y) or math.isinf(uv.x) or math.isinf(uv.y):
                 invalid_coords += 1
@@ -172,13 +242,16 @@ def _analyze_uvs(bm: bmesh.types.BMesh, grid_size: int = 64) -> dict[str, Any]:
             if abs(uv.x) > 4.0 or abs(uv.y) > 4.0:
                 extreme_uv += 1
             nxt = pts[(i + 1) % len(pts)]
-            area += uv.x * nxt.y - nxt.x * uv.y
-        if bad_face or abs(area) * 0.5 <= 1e-8:
+            area2 += uv.x * nxt.y - nxt.x * uv.y
+        signed_area = area2 * 0.5
+        if bad_face or abs(signed_area) <= 1e-8:
             unmapped_faces += 1
         else:
             mapped_faces += 1
+            if signed_area < -1e-8:
+                flipped_uv_faces += 1
 
-    # Overlap & coverage estimation via UV island grid
+    # Overlap, centroid-based self-overlap & island classification
     bm.faces.ensure_lookup_table()
     stride = 1 if face_count <= 25_000 else max(1, face_count // 25_000)
     face_to_island: dict[int, int] = {}
@@ -218,23 +291,101 @@ def _analyze_uvs(bm: bmesh.types.BMesh, grid_size: int = 64) -> dict[str, Any]:
 
     union_cells: set[int] = set()
     overlap_cells: set[int] = set()
+    total_checked_faces = 0
+    self_overlapping_faces = 0
+    island_unit_sets: list[set[int]] = []
+
     for group in island_faces:
         island_cells: set[int] = set()
+        # Spatial hash of face triangles within this single island using strict face centroids (zero edge-sharing false positives)
+        tri_records: list[tuple[int, tuple[float, float], tuple[float, float], tuple[float, float], tuple[float, float, float, float]]] = []
+        centroids: list[tuple[int, float, float]] = []
+
         for f in group:
-            uvs = [lp[uv_layer].uv for lp in f.loops]
+            uvs = [(float(lp[uv_layer].uv.x), float(lp[uv_layer].uv.y)) for lp in f.loops]
             if len(uvs) < 3:
                 continue
-            us = [max(0.0, min(0.9999, u.x % 1.0 if u.x > 1.0 or u.x < 0.0 else u.x)) for u in uvs]
-            vs = [max(0.0, min(0.9999, u.y % 1.0 if u.y > 1.0 or u.y < 0.0 else u.y)) for u in uvs]
-            cx0 = int(min(us) * grid_size)
-            cx1 = int(max(us) * grid_size)
-            cy0 = int(min(vs) * grid_size)
-            cy1 = int(max(vs) * grid_size)
-            for cy in range(cy0, cy1 + 1):
-                for cx in range(cx0, cx1 + 1):
-                    island_cells.add(cy * grid_size + cx)
+            cx_f = sum(p[0] for p in uvs) / len(uvs)
+            cy_f = sum(p[1] for p in uvs) / len(uvs)
+            centroids.append((f.index, cx_f, cy_f))
+            for k in range(1, len(uvs) - 1):
+                a, b, c = uvs[0], uvs[k], uvs[k + 1]
+                island_cells.update(_rasterize_tri_cells(a, b, c, grid_size))
+                tri_records.append(
+                    (
+                        f.index,
+                        a,
+                        b,
+                        c,
+                        (min(a[0], b[0], c[0]), max(a[0], b[0], c[0]), min(a[1], b[1], c[1]), max(a[1], b[1], c[1])),
+                    )
+                )
+
+        if 2 <= len(centroids) <= 4000:
+            total_checked_faces += len(centroids)
+            # Hash triangles into 16x16 world-UV spatial buckets inside the island bbox for O(1) self-overlap test
+            buckets: dict[tuple[int, int], list[int]] = {}
+            xs = [c[1] for c in centroids]
+            ys = [c[2] for c in centroids]
+            min_u, max_u = min(xs), max(xs)
+            min_v, max_v = min(ys), max(ys)
+            span_u = max(max_u - min_u, 1e-4)
+            span_v = max(max_v - min_v, 1e-4)
+            for t_idx, (_, _, _, _, bb) in enumerate(tri_records):
+                bx0 = max(0, min(15, int(((bb[0] - min_u) / span_u) * 16)))
+                bx1 = max(0, min(15, int(((bb[1] - min_u) / span_u) * 16)))
+                by0 = max(0, min(15, int(((bb[2] - min_v) / span_v) * 16)))
+                by1 = max(0, min(15, int(((bb[3] - min_v) / span_v) * 16)))
+                for by in range(by0, by1 + 1):
+                    for bx in range(bx0, bx1 + 1):
+                        buckets.setdefault((bx, by), []).append(t_idx)
+
+            for f_idx, px, py in centroids:
+                bx = max(0, min(15, int(((px - min_u) / span_u) * 16)))
+                by = max(0, min(15, int(((py - min_v) / span_v) * 16)))
+                for t_idx in buckets.get((bx, by), ()):
+                    tf_idx, a, b, c, bb = tri_records[t_idx]
+                    if tf_idx == f_idx:
+                        continue
+                    if bb[0] <= px <= bb[1] and bb[2] <= py <= bb[3] and _point_in_tri_strict_2d((px, py), a, b, c):
+                        self_overlapping_faces += 1
+                        break
+
         overlap_cells.update(union_cells.intersection(island_cells))
         union_cells.update(island_cells)
+        island_unit_sets.append(island_cells)
+
+    # Count island pairs that stack cleanly onto the same UV footprint (mirrored/box-projected reuse)
+    stacked_pairs = 0
+    n_isl = len(island_unit_sets)
+    if 2 <= n_isl <= 64:
+        for i in range(n_isl):
+            si = island_unit_sets[i]
+            if not si:
+                continue
+            for j in range(i + 1, n_isl):
+                sj = island_unit_sets[j]
+                if not sj:
+                    continue
+                inter = len(si.intersection(sj))
+                if inter > 0 and (inter / float(min(len(si), len(sj)))) >= 0.70:
+                    stacked_pairs += 1
+
+    overlap_ratio = round(len(overlap_cells) / max(len(union_cells), 1), 4)
+    self_overlap_ratio = round(self_overlapping_faces / max(total_checked_faces, 1), 4) if total_checked_faces else 0.0
+
+    if overlap_ratio <= 0.10 and self_overlap_ratio <= 0.05 and out_of_unit == 0:
+        uv_layout_mode = "UNIQUE_PACKED"
+    elif overlap_ratio <= 0.15 and self_overlap_ratio <= 0.05:
+        uv_layout_mode = "UNIQUE_UNWRAPPED"
+    elif out_of_unit > 0 and self_overlap_ratio <= 0.10:
+        uv_layout_mode = "INTENTIONAL_BOX_OR_TILED"
+    elif self_overlap_ratio > 0.12:
+        uv_layout_mode = "TANGLED_OR_FOLDED"
+    elif stacked_pairs > 0 or flipped_uv_faces > 0:
+        uv_layout_mode = "MIRRORED_OR_STACKED"
+    else:
+        uv_layout_mode = "UNPACKED_OVERLAP"
 
     return {
         "has_uv": True,
@@ -243,9 +394,13 @@ def _analyze_uvs(bm: bmesh.types.BMesh, grid_size: int = 64) -> dict[str, Any]:
         "invalid_coords": invalid_coords,
         "out_of_unit_range_loops": out_of_unit,
         "extreme_uv_loops": extreme_uv,
-        "overlap_cell_ratio": round(len(overlap_cells) / max(len(union_cells), 1), 4),
+        "overlap_cell_ratio": overlap_ratio,
+        "self_overlap_cell_ratio": self_overlap_ratio,
         "coverage_ratio": round(len(union_cells) / float(grid_size * grid_size), 4),
         "uv_island_count": len(island_faces),
+        "flipped_uv_faces": flipped_uv_faces,
+        "stacked_island_pairs": stacked_pairs,
+        "uv_layout_mode": uv_layout_mode,
     }
 
 

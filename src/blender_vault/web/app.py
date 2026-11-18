@@ -39,6 +39,7 @@ from ..reference.reference_drive_sync import ReferenceDriveSyncService
 from ..reference.reference_storage import ReferenceStorage
 from ..reference.router import build_reference_router
 from ..reference.scheduler import DailyCollectionScheduler
+from ..reference.windows_task_scheduler import WindowsTaskSchedulerManager
 from ..roblox_qa import RobloxQAEngine, RobloxWorkflowService
 from ..roblox_qa.router import build_roblox_router
 from ..services.desktop import launch_in_blender_gui
@@ -90,7 +91,8 @@ def create_app(
     ref_drive = ReferenceDriveSyncService(gdrive, ref_db, ref_storage)
     ref_collector = CollectionCycleService(cfg, ref_db, ref_storage, bs_client, ref_inspector, ref_grader, ref_drive)
     ref_scheduler = DailyCollectionScheduler(cfg, db, ref_collector)
-    ref_dashboard = ReferenceDashboardService(cfg, ref_db, bs_client, ref_scheduler)
+    win_task_scheduler = WindowsTaskSchedulerManager(cfg)
+    ref_dashboard = ReferenceDashboardService(cfg, ref_db, bs_client, ref_scheduler, win_task_scheduler)
     benchmark_engine = BenchmarkEngine(db, ref_db, ref_storage, ref_inspector, ref_grader, ref_drive)
 
     def _auto_benchmark_if_ready(asset_id: str, version_num: int) -> None:
@@ -127,6 +129,7 @@ def create_app(
     app.state.ref_drive = ref_drive
     app.state.ref_collector = ref_collector
     app.state.ref_scheduler = ref_scheduler
+    app.state.win_task_scheduler = win_task_scheduler
     app.state.ref_dashboard = ref_dashboard
     app.state.benchmark_engine = benchmark_engine
     app.state.roblox_registrar = pipeline.roblox_registrar
@@ -135,19 +138,71 @@ def create_app(
         cfg,
         qa_engine=RobloxQAEngine(cfg, runner=runner),
     )
+    from concurrent.futures import ThreadPoolExecutor as _StudioExecutor
+    from .studio_router import build_studio_router
+
+    app.state.rules_manager = ref_collector.rules_manager
+    app.state.executor = locals().get("executor") or _StudioExecutor(
+        max_workers=2,
+        thread_name_prefix="studio-worker",
+    )
 
     app.include_router(build_reference_router(app.state))
     app.include_router(build_roblox_router(app.state))
+    app.include_router(build_studio_router(app.state))
 
     STATIC_DIR.mkdir(parents=True, exist_ok=True)
+    STUDIO_DIST_DIR = Path(__file__).resolve().parent / "studio_dist"
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
-    @app.get("/", response_class=HTMLResponse)
-    def index_page() -> HTMLResponse:
+    def _serve_legacy_index() -> HTMLResponse:
         idx = STATIC_DIR / "index.html"
         if not idx.is_file():
             return HTMLResponse("<h1>Blender Asset Vault UI missing</h1>", status_code=500)
         return HTMLResponse(idx.read_text(encoding="utf-8"))
+
+    def _serve_studio_or_legacy() -> HTMLResponse:
+        studio_idx = STUDIO_DIST_DIR / "index.html"
+        if studio_idx.is_file():
+            return HTMLResponse(studio_idx.read_text(encoding="utf-8"))
+        return _serve_legacy_index()
+
+    @app.get("/", response_class=HTMLResponse)
+    def index_page() -> HTMLResponse:
+        return _serve_studio_or_legacy()
+
+    @app.get("/legacy", response_class=HTMLResponse)
+    def legacy_index_page() -> HTMLResponse:
+        return _serve_legacy_index()
+
+    for _spa_path in (
+        "/overview",
+        "/generation",
+        "/vault",
+        "/references",
+        "/collection",
+        "/quality",
+        "/settings",
+    ):
+        app.add_api_route(
+            _spa_path,
+            _serve_studio_or_legacy,
+            methods=["GET"],
+            response_class=HTMLResponse,
+            include_in_schema=False,
+        )
+
+    @app.get("/assets/{asset_path:path}", include_in_schema=False)
+    def serve_studio_asset(asset_path: str):
+        assets_root = (STUDIO_DIST_DIR / "assets").resolve()
+        candidate = (assets_root / asset_path).resolve()
+        try:
+            candidate.relative_to(assets_root)
+        except ValueError as exc:
+            raise HTTPException(status_code=403, detail="Invalid asset path.") from exc
+        if not candidate.is_file():
+            raise HTTPException(status_code=404, detail="Studio static asset not found.")
+        return FileResponse(path=str(candidate))
 
     @app.get("/api/health")
     def health() -> dict[str, Any]:

@@ -283,12 +283,14 @@ def _inspect_mesh_object(obj: bpy.types.Object, armature_names: set[str]) -> dic
             tri_count_from_faces += (vcount - 2)
 
         area = face.calc_area()
-        surface_area += area
-        if area <= 1e-10:
+        if not math.isfinite(area) or area <= 1e-10:
             zero_area_faces += 1
             degenerate_faces += 1
         elif area <= 1e-8 or any(e.calc_length() <= 1e-7 for e in face.edges):
+            surface_area += area
             degenerate_faces += 1
+        else:
+            surface_area += area
 
     components = _count_connected_components(bm)
     dup_verts = _count_duplicate_verts(bm)
@@ -328,9 +330,9 @@ def _inspect_mesh_object(obj: bpy.types.Object, armature_names: set[str]) -> dic
         "interior_vert_count": len(interior_verts),
         "pole_vert_count": pole_verts,
         "connected_components": components,
-        "dimensions": [round(d, 5) for d in dims],
-        "scale": [round(float(v), 5) for v in obj.scale],
-        "surface_area": round(float(surface_area), 6),
+        "dimensions": [round(float(d), 5) if math.isfinite(d) else 0.0 for d in dims],
+        "scale": [round(float(v), 5) if math.isfinite(v) else 1.0 for v in obj.scale],
+        "surface_area": round(float(surface_area), 6) if math.isfinite(surface_area) else 0.0,
         "non_manifold_edges": non_manifold_edges,
         "boundary_edges": boundary_edges,
         "multi_face_edges": multi_face_edges,
@@ -457,7 +459,10 @@ def main() -> None:
         total_zero_area = sum(o["zero_area_faces"] for o in obj_metrics)
         total_dups = sum(o["duplicate_verts"] for o in obj_metrics)
         total_inv = sum(o["inverted_normals_count"] for o in obj_metrics)
-        total_surface_area = sum(o["surface_area"] for o in obj_metrics)
+        total_surface_area = sum(
+            (o["surface_area"] if isinstance(o["surface_area"], (int, float)) and math.isfinite(o["surface_area"]) else 0.0)
+            for o in obj_metrics
+        )
         total_interior = sum(o["interior_vert_count"] for o in obj_metrics)
         total_poles = sum(o["pole_vert_count"] for o in obj_metrics)
 
@@ -599,9 +604,9 @@ def main() -> None:
                 "zero_area_faces": total_zero_area,
                 "duplicate_verts": total_dups,
                 "inverted_normals_count": total_inv,
-                "mesh_density_tris_per_m3": density,
-                "surface_area": round(total_surface_area, 4),
-                "dimensions": [round(d, 5) for d in dims],
+                "mesh_density_tris_per_m3": density if math.isfinite(density) else 0.0,
+                "surface_area": round(total_surface_area, 4) if math.isfinite(total_surface_area) else 0.0,
+                "dimensions": [round(d, 5) if math.isfinite(d) else 0.0 for d in dims],
                 "quad_count": total_quads,
                 "tri_face_count": total_tri_faces,
                 "ngon_count": total_ngons,

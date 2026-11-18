@@ -20,6 +20,8 @@ from blender_vault.database import (
     ProductionStatus,
     QAReportRepository,
     RobloxDatabaseManager,
+    StudioVerificationRepository,
+    StudioVerificationStatus,
     VersionRepository,
     VisualStyle,
     format_asset_id,
@@ -294,3 +296,89 @@ def test_configurable_database_path_via_settings(tmp_path: Path) -> None:
     assert cfg.resolved_roblox_db_path == custom_db
     default_cfg = Settings()
     assert default_cfg.resolved_roblox_db_path == Path("./data/roblox_asset_library.db")
+
+
+def test_studio_verification_default_pending_and_version_tracking(tmp_path: Path) -> None:
+    db = RobloxDatabaseManager(tmp_path / "roblox_studio.db", backups_dir=tmp_path / "backups")
+    assert db.verify_integrity()["schema_version"] >= 3
+
+    cats = CategoryRepository(db)
+    cats.seed_master_inventory(Path("config/master_inventory.json"))
+    fur = cats.get_by_code("FUR")
+    assert fur is not None
+
+    assets = AssetRepository(db)
+    versions = VersionRepository(db)
+    qa_repo = QAReportRepository(db)
+    studio_repo = StudioVerificationRepository(db)
+
+    chair = assets.register_asset(
+        asset_name="Studio Verified Chair",
+        category_id=fur.category_id,
+        production_status=ProductionStatus.QA_PENDING,
+    )
+    v1 = versions.get_asset_version(chair.asset_id, 1)
+    assert v1 is not None
+    # Default Studio verification is always strictly PENDING
+    assert v1.studio_verification_status == "PENDING"
+    assert studio_repo.get_latest_verification(chair.asset_id, version_id=v1.version_id) is None
+
+    qa_repo.save_qa_report(
+        asset_id=chair.asset_id,
+        version_id=v1.version_id,
+        overall_score=95.0,
+        mesh_integrity_score=15.0,
+        geometry_score=10.0,
+        polygon_efficiency_score=10.0,
+        uv_score=10.0,
+        material_score=10.0,
+        scale_score=10.0,
+        roblox_compatibility_score=15.0,
+        collision_score=5.0,
+        visual_score=5.0,
+        organisation_score=5.0,
+        final_status="QA_PASSED",
+        grade="A",
+        target_production_status=ProductionStatus.AWAITING_HUMAN_APPROVAL,
+    )
+    versions.mark_version_approved(chair.asset_id, 1, approved_by="Owner")
+    # Human approval must NOT fake Studio verification as PASSED
+    assert versions.get_asset_version(chair.asset_id, 1).studio_verification_status == "PENDING"
+    with pytest.raises(InvalidStatusTransitionError):
+        assets.transition_status(chair.asset_id, ProductionStatus.QA_PENDING)
+
+    # Record a FAILED Studio test (scale mismatch)
+    rec_fail = studio_repo.record_verification(
+        chair.asset_id,
+        version_number=1,
+        fbx_import_ok=True,
+        orientation_ok=True,
+        scale_ok=False,
+        material_appearance_ok=True,
+        collision_test_ok=True,
+        verified_by="Owner",
+        studio_errors=["Imported mesh was 100x too small in Studio"],
+        notes="Scale check failed",
+    )
+    assert rec_fail.status == StudioVerificationStatus.FAILED
+    assert versions.get_asset_version(chair.asset_id, 1).studio_verification_status == "FAILED"
+
+    # Record a PASSED verification on v2 cleanly
+    v2 = versions.create_new_version(chair.asset_id, change_description="Fixed scale unit factor")
+    assert v2.studio_verification_status == "PENDING"
+    rec_pass = studio_repo.record_verification(
+        chair.asset_id,
+        version_number=2,
+        fbx_import_ok=True,
+        orientation_ok=True,
+        scale_ok=True,
+        material_appearance_ok=True,
+        collision_test_ok=True,
+        verified_by="Owner",
+        notes="Verified in Roblox Studio R15 place",
+    )
+    assert rec_pass.status == StudioVerificationStatus.PASSED
+    assert rec_pass.version_id == v2.version_id
+    assert versions.get_asset_version(chair.asset_id, 2).studio_verification_status == "PASSED"
+    # v1 verification remains FAILED in history
+    assert versions.get_asset_version(chair.asset_id, 1).studio_verification_status == "FAILED"

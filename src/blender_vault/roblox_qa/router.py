@@ -31,6 +31,19 @@ class RunQABody(BaseModel):
     render_previews: bool = True
 
 
+class StudioVerifyBody(BaseModel):
+    verified_by: str
+    fbx_import_ok: bool
+    orientation_ok: bool
+    scale_ok: bool
+    material_appearance_ok: bool
+    collision_test_ok: bool
+    studio_warnings: list[str] = []
+    studio_errors: list[str] = []
+    notes: str = ""
+    version_number: Optional[int] = None
+
+
 def build_roblox_router(app_state: Any) -> APIRouter:
     """Create FastAPI router for Roblox asset database, QA scoring, reports, and approval."""
     router = APIRouter(prefix="/api/roblox", tags=["Roblox Asset Pipeline"])
@@ -86,10 +99,12 @@ def build_roblox_router(app_state: Any) -> APIRouter:
         versions = wf.versions.list_versions(asset_id)
         reports = wf.qa_reports.list_reports_for_asset(asset_id)
         logs = wf.logs.list_logs(asset_id=asset_id, limit=50)
+        studio_verifications = wf.studio_verifications.list_verifications(asset_id)
         return {
             "asset": asset.model_dump(),
             "versions": [v.model_dump() for v in versions],
             "qa_reports": [r.model_dump() for r in reports],
+            "studio_verifications": [s.model_dump() for s in studio_verifications],
             "production_logs": [l.model_dump() for l in logs],
         }
 
@@ -149,6 +164,36 @@ def build_roblox_router(app_state: Any) -> APIRouter:
             return {"asset": updated.model_dump()}
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @router.post("/assets/{asset_id}/studio-verify")
+    def record_studio_verification(asset_id: str, body: StudioVerifyBody) -> dict[str, Any]:
+        wf = app_state.roblox_workflow
+        try:
+            res = wf.record_studio_verification(
+                asset_id,
+                version_number=body.version_number,
+                fbx_import_ok=body.fbx_import_ok,
+                orientation_ok=body.orientation_ok,
+                scale_ok=body.scale_ok,
+                material_appearance_ok=body.material_appearance_ok,
+                collision_test_ok=body.collision_test_ok,
+                verified_by=body.verified_by,
+                studio_warnings=body.studio_warnings,
+                studio_errors=body.studio_errors,
+                notes=body.notes,
+            )
+            return {
+                "asset": res["asset"].model_dump(),
+                "version": res["version"].model_dump(),
+                "studio_verification": res["studio_verification"].model_dump(),
+                "report_paths": {k: str(v) for k, v in res["report_paths"].items()},
+            }
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @router.get("/assets/{asset_id}/report/{kind}")
     def download_qa_report(asset_id: str, kind: str) -> FileResponse:

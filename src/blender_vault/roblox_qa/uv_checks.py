@@ -35,6 +35,12 @@ def evaluate_uv_quality(
     extreme_uv_loops = sum(int(o.get("uv_stats", {}).get("extreme_uv_loops", 0)) for o in objects)
     out_of_unit = sum(int(o.get("uv_stats", {}).get("out_of_unit_range_loops", 0)) for o in objects)
     avg_overlap = sum(float(o.get("uv_stats", {}).get("overlap_cell_ratio", 0.0)) for o in objects) / max(len(objects), 1)
+    avg_self_overlap = sum(float(o.get("uv_stats", {}).get("self_overlap_cell_ratio", 0.0)) for o in objects) / max(len(objects), 1)
+    layout_modes = [str(o.get("uv_stats", {}).get("uv_layout_mode", "UNKNOWN")) for o in objects]
+    mat_info = dict(inspection.get("material_inspection", {}))
+    img_count = int(mat_info.get("image_texture_count", 0))
+    require_pbr_maps = bool(policy.get("require_pbr_maps", False))
+    uses_image_textures = img_count > 0 or require_pbr_maps
 
     score = max_score
 
@@ -149,7 +155,7 @@ def evaluate_uv_quality(
                 )
             )
 
-    # Intentional mirrored/tiled UVs or out-of-[0,1] box projection are classified as WARN/INFO, NOT hard error
+    # Intentional mirrored/tiled UVs or out-of-[0,1] box projection on procedural assets are INFO (0 penalty)
     if extreme_uv_loops > 0:
         score -= 1.0
         msg = f"{extreme_uv_loops} UV loop(s) exceed [-4, 4] range; verify intentional tiling."
@@ -167,7 +173,8 @@ def evaluate_uv_quality(
             )
         )
     elif out_of_unit > 0:
-        score -= 0.25
+        if uses_image_textures:
+            score -= 0.25
         findings.append(
             CheckFinding(
                 check_id="uv_range",
@@ -175,37 +182,100 @@ def evaluate_uv_quality(
                 name="UV Coordinate Range",
                 status="INFO",
                 measured=out_of_unit,
-                threshold="[0, 1] preferred",
-                message=f"{out_of_unit} UV loop(s) extend outside [0, 1] (acceptable for tiled/box UVs).",
+                threshold="[0, 1] preferred for unique bakes",
+                message=(
+                    f"{out_of_unit} UV loop(s) extend outside [0, 1] "
+                    + ("(acceptable for seamless/tiled image textures)." if uses_image_textures else "(valid for procedural shaders / tiled projection).")
+                ),
             )
         )
 
-    if avg_overlap > 0.25:
-        score -= 0.75
-        msg = f"Overlapping UV islands detected ({avg_overlap:.0%} average cell overlap); acceptable if mirrored/tiled, problematic for unique lightmap/texture baking."
+    if avg_self_overlap > 0.12:
+        score -= 2.0
+        msg = f"Folded/self-overlapping faces detected inside UV islands ({avg_self_overlap:.0%}); texture artifacts likely."
         warnings.append(msg)
-        recommendations.append("Pack UV islands without overlap if baking unique Roblox PBR texture maps.")
+        recommendations.append("Re-unwrap folded UV islands cleanly with Smart UV Project or marked seams.")
         findings.append(
             CheckFinding(
                 check_id="uv_overlap",
                 dimension="uv_quality",
-                name="UV Island Overlap",
+                name="UV Island Overlap & Layout",
                 status="WARN",
-                measured=round(avg_overlap, 3),
-                threshold="<= 0.25 for unique bakes",
+                measured={"overlap": round(avg_overlap, 3), "self_overlap": round(avg_self_overlap, 3), "modes": sorted(set(layout_modes))},
+                threshold="self_overlap <= 0.12",
                 message=msg,
             )
         )
+    elif avg_overlap > 0.20:
+        intentional_mode = any(
+            m in {"INTENTIONAL_BOX_OR_TILED", "MIRRORED_OR_STACKED"} for m in layout_modes
+        )
+        if not uses_image_textures:
+            recommendations.append(
+                "Note: pack non-overlapping [0, 1] UVs only if you later bake unique PBR SurfaceAppearance maps or lightmaps."
+            )
+            findings.append(
+                CheckFinding(
+                    check_id="uv_overlap",
+                    dimension="uv_quality",
+                    name="UV Island Overlap & Layout",
+                    status="INFO",
+                    measured={"overlap": round(avg_overlap, 3), "modes": sorted(set(layout_modes)), "image_textures": img_count},
+                    threshold="Non-penalty for procedural/tiled materials",
+                    message=(
+                        f"Intentional box-projected/tiled UV island overlap ({avg_overlap:.0%}, mode={','.join(sorted(set(layout_modes)))}); "
+                        "valid for procedural materials without distortion (not intended for unique texture baking)."
+                    ),
+                )
+            )
+        elif intentional_mode:
+            score -= 0.5
+            msg = (
+                f"Mirrored/tiled UV island overlap ({avg_overlap:.0%}) with image texture(s); "
+                "valid for symmetrical/seamless textures, unsuitable for unique lightmap or asymmetrical baking."
+            )
+            warnings.append(msg)
+            recommendations.append("Pack UVs without overlap if baking unique asymmetrical PBR textures or lightmaps.")
+            findings.append(
+                CheckFinding(
+                    check_id="uv_overlap",
+                    dimension="uv_quality",
+                    name="UV Island Overlap & Layout",
+                    status="WARN",
+                    measured={"overlap": round(avg_overlap, 3), "modes": sorted(set(layout_modes)), "image_textures": img_count},
+                    threshold="<= 0.20 for unique bakes",
+                    message=msg,
+                )
+            )
+        else:
+            score -= 1.5
+            msg = (
+                f"Unpacked overlapping UV islands ({avg_overlap:.0%}) detected alongside {img_count} image texture(s); "
+                "unique texture/lightmap baking will cause cross-island bleeding."
+            )
+            warnings.append(msg)
+            recommendations.append("Pack UV islands inside [0, 1] without overlap for Roblox SurfaceAppearance PBR maps.")
+            findings.append(
+                CheckFinding(
+                    check_id="uv_overlap",
+                    dimension="uv_quality",
+                    name="UV Island Overlap & Layout",
+                    status="WARN",
+                    measured={"overlap": round(avg_overlap, 3), "modes": sorted(set(layout_modes)), "image_textures": img_count},
+                    threshold="<= 0.20",
+                    message=msg,
+                )
+            )
     else:
         findings.append(
             CheckFinding(
                 check_id="uv_overlap",
                 dimension="uv_quality",
-                name="UV Island Overlap",
+                name="UV Island Overlap & Layout",
                 status="PASS",
-                measured=round(avg_overlap, 3),
-                threshold="<= 0.25",
-                message=f"Clean UV packing (overlap ratio {avg_overlap:.1%}).",
+                measured={"overlap": round(avg_overlap, 3), "modes": sorted(set(layout_modes))},
+                threshold="<= 0.20",
+                message=f"Clean UV layout ({avg_overlap:.1%} overlap, mode={','.join(sorted(set(layout_modes)))}); suitable for unique PBR baking.",
             )
         )
 

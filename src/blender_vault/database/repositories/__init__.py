@@ -4,6 +4,7 @@ from .asset_repo import AssetRepository
 from .category_repo import CategoryRepository
 from .log_repo import LogRepository
 from .qa_repo import QAReportRepository
+from .studio_repo import StudioVerificationRepository
 from .version_repo import VersionRepository
 
 __all__ = [
@@ -11,5 +12,6 @@ __all__ = [
     "CategoryRepository",
     "LogRepository",
     "QAReportRepository",
+    "StudioVerificationRepository",
     "VersionRepository",
 ]

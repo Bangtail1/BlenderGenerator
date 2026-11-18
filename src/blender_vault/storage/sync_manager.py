@@ -70,8 +70,8 @@ class RobloxDriveSyncManager:
         if not version:
             raise KeyError(f"Asset '{asset_id}' version v{ver_num:03d} not found.")
 
-        if asset.production_status == ProductionStatus.QA_FAILED or version.qa_status == "QA_FAILED":
-            raise ValueError(f"Cannot upload failed asset '{asset_id}' v{ver_num:03d} to production Drive.")
+        if asset.production_status == ProductionStatus.QA_FAILED or version.qa_status in ("QA_FAILED", "FAILED"):
+            raise ValueError(f"Cannot upload failed asset '{asset_id}' v{ver_num:03d} to Google Drive.")
 
         blend_path = Path(version.blender_source_path) if version.blender_source_path else None
         export_path = Path(version.export_path) if version.export_path else None
@@ -80,10 +80,18 @@ class RobloxDriveSyncManager:
                 f"Cannot sync incomplete asset '{asset_id}' v{ver_num:03d}: missing local .blend and export files."
             )
 
-        is_approved = version.is_approved or (
-            asset.human_approved and asset.production_status in (ProductionStatus.APPROVED, ProductionStatus.PUBLISHED)
+        is_approved = bool(
+            version.is_approved
+            and version.qa_status == "APPROVED"
+            and asset.production_status in (ProductionStatus.APPROVED, ProductionStatus.PUBLISHED)
         )
-        if require_approved_for_production and asset.production_status in (
+        if require_approved_for_production and not is_approved:
+            raise ValueError(
+                f"Cannot sync unapproved asset '{asset_id}' v{ver_num:03d} "
+                f"(status='{asset.production_status.value}', version_qa='{version.qa_status}') "
+                "to production Google Drive."
+            )
+        if not require_approved_for_production and asset.production_status in (
             ProductionStatus.PLANNED,
             ProductionStatus.QUEUED,
             ProductionStatus.MODELLING,
@@ -95,11 +103,12 @@ class RobloxDriveSyncManager:
             )
 
         try:
-            # Reuse Branch 1 vault sync directly when linked and Vault version is present
+            # Reuse Branch 1 vault sync directly only when linked status aligns with approval state
             if asset.legacy_vault_id and self.vault_db is not None:
                 va = self.vault_db.get_asset(asset.legacy_vault_id)
                 vv = self.vault_db.get_version(asset.legacy_vault_id, ver_num) if va else None
-                if va and vv and vv.status != AssetStatus.FAILED:
+                vault_already_approved = bool(vv and vv.status in (AssetStatus.APPROVED, AssetStatus.UPLOADED))
+                if va and vv and vv.status != AssetStatus.FAILED and (is_approved or not vault_already_approved):
                     if is_approved and vv.status not in (AssetStatus.APPROVED, AssetStatus.UPLOADED):
                         vv.status = AssetStatus.APPROVED
                         self.vault_db.update_version(vv)

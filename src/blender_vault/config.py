@@ -6,9 +6,9 @@ import glob
 import os
 import shutil
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
-from pydantic import Field
+from pydantic import Field, PrivateAttr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -94,12 +94,22 @@ class Settings(BaseSettings):
     blendswap_timeout_seconds: float = 30.0
     reference_library_dir: Optional[Path] = None
     collection_daily_target: int = 7
-    collection_schedule_time: str = "02:00"
+    collection_schedule_frequency: str = "daily"
+    collection_schedule_time: str = "03:00"
     collection_timezone: str = "Europe/London"
     collection_scheduler_enabled: bool = True
+    collection_reset_recheck_minutes: int = 15
+    collection_resume_missed_jobs: bool = True
+    collection_schedule_config_path: Optional[Path] = None
     allow_credit_spend: bool = False
     reference_license_policy: str = "all_free"  # all_free | cc_only | permissive_only
     reference_drive_sync_enabled: bool = True
+
+    @property
+    def resolved_collection_schedule_config_path(self) -> Path:
+        if self.collection_schedule_config_path is not None:
+            return self.collection_schedule_config_path.resolve()
+        return (self.resolved_reference_library_dir / "database" / "collection_schedule.json").resolve()
 
     # Pipeline 1 & 2: Roblox Asset Database & Automated QA System
     roblox_db_path: Optional[Path] = None
@@ -112,12 +122,27 @@ class Settings(BaseSettings):
     roblox_auto_register: bool = True
     roblox_auto_qa: bool = True
 
+    _explicit_init_fields: set[str] = PrivateAttr(default_factory=set)
+
+    def __init__(self, **values: Any) -> None:
+        super().__init__(**values)
+        self._explicit_init_fields = set(values.keys())
+
     @property
     def _is_default_vault_dir(self) -> bool:
         return self.vault_data_dir == Path("./vault_storage")
 
+    def _should_isolate_roblox_path(self, field_name: str, env_var: str) -> bool:
+        return (
+            not self._is_default_vault_dir
+            and field_name not in self._explicit_init_fields
+            and env_var not in os.environ
+        )
+
     @property
     def resolved_roblox_db_path(self) -> Path:
+        if self._should_isolate_roblox_path("roblox_db_path", "ROBLOX_DB_PATH"):
+            return self.vault_data_dir / "roblox_asset_library.db"
         if self.roblox_db_path is not None:
             return self.roblox_db_path
         if self._is_default_vault_dir:
@@ -126,6 +151,8 @@ class Settings(BaseSettings):
 
     @property
     def resolved_roblox_backups_dir(self) -> Path:
+        if self._should_isolate_roblox_path("roblox_backups_dir", "ROBLOX_BACKUPS_DIR"):
+            return self.vault_data_dir / "roblox_backups"
         if self.roblox_backups_dir is not None:
             return self.roblox_backups_dir
         if self._is_default_vault_dir:
@@ -134,6 +161,8 @@ class Settings(BaseSettings):
 
     @property
     def resolved_roblox_reports_dir(self) -> Path:
+        if self._should_isolate_roblox_path("roblox_reports_dir", "ROBLOX_REPORTS_DIR"):
+            return self.vault_data_dir / "roblox_reports"
         if self.roblox_reports_dir is not None:
             return self.roblox_reports_dir
         if self._is_default_vault_dir:
@@ -142,6 +171,8 @@ class Settings(BaseSettings):
 
     @property
     def resolved_roblox_output_dir(self) -> Path:
+        if self._should_isolate_roblox_path("roblox_output_dir", "ROBLOX_OUTPUT_DIR"):
+            return self.vault_data_dir / "roblox_output"
         if self.roblox_output_dir is not None:
             return self.roblox_output_dir
         if self._is_default_vault_dir:

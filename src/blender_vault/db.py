@@ -6,7 +6,7 @@ import json
 import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Iterator, Optional
+from typing import Any, Iterator, Optional
 
 from .models import (
     AssetManifest,
@@ -83,6 +83,11 @@ CREATE TABLE IF NOT EXISTS jobs (
     job_type TEXT NOT NULL,
     status TEXT NOT NULL,
     stage TEXT NOT NULL DEFAULT '',
+    params_json TEXT NOT NULL DEFAULT '{}',
+    stages_json TEXT NOT NULL DEFAULT '[]',
+    started_at TEXT,
+    completed_at TEXT,
+    cancel_requested INTEGER NOT NULL DEFAULT 0,
     error_message TEXT,
     log_path TEXT,
     created_at TEXT NOT NULL,
@@ -122,6 +127,17 @@ class VaultDatabase:
     def _init_schema(self) -> None:
         with self.connect() as conn:
             conn.executescript(SCHEMA_SQL)
+            existing_cols = {row["name"] for row in conn.execute("PRAGMA table_info(jobs)").fetchall()}
+            migrations = {
+                "params_json": "TEXT NOT NULL DEFAULT '{}'",
+                "stages_json": "TEXT NOT NULL DEFAULT '[]'",
+                "started_at": "TEXT",
+                "completed_at": "TEXT",
+                "cancel_requested": "INTEGER NOT NULL DEFAULT 0",
+            }
+            for col, col_def in migrations.items():
+                if col not in existing_cols:
+                    conn.execute(f"ALTER TABLE jobs ADD COLUMN {col} {col_def}")
 
     def create_asset_with_version(self, asset: AssetRecord, version: AssetVersion) -> None:
         with self.connect() as conn:
@@ -439,28 +455,109 @@ class VaultDatabase:
         stage: str = "",
         error_message: Optional[str] = None,
         log_path: Optional[str] = None,
+        params: Optional[dict[str, Any]] = None,
+        stages: Optional[list[dict[str, Any]]] = None,
+        started_at: Optional[str] = None,
+        completed_at: Optional[str] = None,
     ) -> None:
         now = utc_now_iso()
         with self.connect() as conn:
-            existing = conn.execute("SELECT 1 FROM jobs WHERE job_id = ?", (job_id,)).fetchone()
+            existing = conn.execute("SELECT * FROM jobs WHERE job_id = ?", (job_id,)).fetchone()
             if existing:
                 conn.execute(
                     """
-                    UPDATE jobs SET status = ?, stage = ?, error_message = ?, log_path = ?, updated_at = ?
+                    UPDATE jobs SET
+                        status = ?,
+                        stage = ?,
+                        error_message = ?,
+                        log_path = ?,
+                        params_json = ?,
+                        stages_json = ?,
+                        started_at = COALESCE(?, started_at),
+                        completed_at = COALESCE(?, completed_at),
+                        updated_at = ?
                     WHERE job_id = ?
                     """,
-                    (status, stage, error_message, log_path, now, job_id),
+                    (
+                        status,
+                        stage,
+                        error_message,
+                        log_path,
+                        json.dumps(params) if params is not None else existing["params_json"],
+                        json.dumps(stages) if stages is not None else existing["stages_json"],
+                        started_at,
+                        completed_at,
+                        now,
+                        job_id,
+                    ),
                 )
             else:
                 conn.execute(
                     """
-                    INSERT INTO jobs (job_id, asset_id, version, job_type, status, stage, error_message, log_path, created_at, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO jobs (
+                        job_id, asset_id, version, job_type, status, stage,
+                        params_json, stages_json, started_at, completed_at, cancel_requested,
+                        error_message, log_path, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?)
                     """,
-                    (job_id, asset_id, version, job_type, status, stage, error_message, log_path, now, now),
+                    (
+                        job_id,
+                        asset_id,
+                        version,
+                        job_type,
+                        status,
+                        stage,
+                        json.dumps(params or {}),
+                        json.dumps(stages or []),
+                        started_at,
+                        completed_at,
+                        error_message,
+                        log_path,
+                        now,
+                        now,
+                    ),
                 )
 
-    def list_jobs(self, asset_id: Optional[str] = None, limit: int = 50) -> list[dict]:
+    def _hydrate_job_row(self, row: sqlite3.Row) -> dict[str, Any]:
+        d = dict(row)
+        try:
+            d["params"] = json.loads(d.pop("params_json", "{}") or "{}")
+        except json.JSONDecodeError:
+            d["params"] = {}
+        try:
+            d["stages"] = json.loads(d.pop("stages_json", "[]") or "[]")
+        except json.JSONDecodeError:
+            d["stages"] = []
+        d["cancel_requested"] = bool(d.get("cancel_requested", 0))
+        return d
+
+    def get_job(self, job_id: str) -> Optional[dict[str, Any]]:
+        with self.connect() as conn:
+            row = conn.execute("SELECT * FROM jobs WHERE job_id = ?", (job_id,)).fetchone()
+            return self._hydrate_job_row(row) if row else None
+
+    def request_job_cancel(self, job_id: str) -> Optional[dict[str, Any]]:
+        now = utc_now_iso()
+        with self.connect() as conn:
+            row = conn.execute("SELECT * FROM jobs WHERE job_id = ?", (job_id,)).fetchone()
+            if not row:
+                return None
+            if row["status"] in ("COMPLETED", "FAILED", "CANCELLED"):
+                return self._hydrate_job_row(row)
+            if row["status"] == "QUEUED":
+                conn.execute(
+                    "UPDATE jobs SET status = 'CANCELLED', cancel_requested = 1, completed_at = ?, updated_at = ? WHERE job_id = ?",
+                    (now, now, job_id),
+                )
+            else:
+                conn.execute(
+                    "UPDATE jobs SET cancel_requested = 1, updated_at = ? WHERE job_id = ?",
+                    (now, job_id),
+                )
+            updated = conn.execute("SELECT * FROM jobs WHERE job_id = ?", (job_id,)).fetchone()
+            return self._hydrate_job_row(updated)
+
+    def list_jobs(self, asset_id: Optional[str] = None, limit: int = 50) -> list[dict[str, Any]]:
         with self.connect() as conn:
             if asset_id:
                 rows = conn.execute(
@@ -472,7 +569,7 @@ class VaultDatabase:
                     "SELECT * FROM jobs ORDER BY created_at DESC LIMIT ?",
                     (limit,),
                 ).fetchall()
-            return [dict(r) for r in rows]
+            return [self._hydrate_job_row(r) for r in rows]
 
     def set_setting(self, key: str, value: str) -> None:
         now = utc_now_iso()

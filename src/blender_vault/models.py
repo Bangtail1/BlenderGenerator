@@ -343,6 +343,9 @@ class GenerateAssetRequest(BaseModel):
     params: dict[str, Any] = Field(default_factory=dict)
     visual_style: str = "LP"
     variant_name: str = "Basic"
+    complexity: str = "medium"  # low | medium | high
+    poly_budget: Optional[int] = None
+    additional_instructions: str = ""
     department_code: Optional[str] = None
     genre_codes: list[str] = Field(default_factory=list)
     export_format: Optional[str] = None

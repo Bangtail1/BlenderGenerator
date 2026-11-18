@@ -7,6 +7,7 @@ import logging
 import re
 import shutil
 import tempfile
+import time
 from pathlib import Path
 from typing import Any, Optional
 
@@ -328,7 +329,17 @@ class ReferenceStorage:
             ) as fh:
                 tmp_path = Path(fh.name)
                 fh.write(content)
-            tmp_path.replace(target)
+            for attempt in range(1, 9):
+                try:
+                    tmp_path.replace(target)
+                    return
+                except PermissionError:
+                    if attempt < 8:
+                        time.sleep(0.15 * attempt)
+                        continue
+                    target.write_text(content, encoding="utf-8")
+                    tmp_path.unlink(missing_ok=True)
+                    return
         except Exception:
             if tmp_path is not None:
                 tmp_path.unlink(missing_ok=True)

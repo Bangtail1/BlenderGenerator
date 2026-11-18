@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 from enum import Enum
+import math
 from typing import Any, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from ..models import DriveFileRecord, DriveSyncStatus, utc_now_iso
 
@@ -305,6 +306,44 @@ class ReferenceInspectionReport(BaseModel):
     log_path: Optional[str] = None
     inspected_at: str = Field(default_factory=utc_now_iso)
 
+    @model_validator(mode="before")
+    @classmethod
+    def _coerce_non_finite_or_null_floats(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        cleaned = dict(data)
+        for key in (
+            "mesh_density_tris_per_m3",
+            "surface_area",
+            "quad_ratio",
+            "triangle_ratio",
+            "quad_to_tri_ratio",
+            "ngon_ratio",
+            "pole_vertex_ratio",
+            "edge_flow_score",
+            "mesh_cleanliness_score",
+            "uv_mapped_mesh_ratio",
+            "uv_coverage_ratio",
+            "uv_overlap_cell_ratio",
+            "uv_completeness_ratio",
+            "material_node_count_avg",
+            "naming_consistency_ratio",
+            "object_separation_score",
+            "scene_organization_score",
+            "lighting_quality_score",
+        ):
+            val = cleaned.get(key)
+            if val is None and key in cleaned:
+                cleaned[key] = 0.0
+            elif isinstance(val, (int, float)) and not math.isfinite(val):
+                cleaned[key] = 0.0
+        if isinstance(cleaned.get("dimensions"), list):
+            cleaned["dimensions"] = [
+                0.0 if (v is None or (isinstance(v, (int, float)) and not math.isfinite(v))) else float(v)
+                for v in cleaned["dimensions"]
+            ]
+        return cleaned
+
 
 class DimensionScore(BaseModel):
     dimension: str
@@ -409,6 +448,44 @@ class SelectionCandidate(BaseModel):
     modeling_style_hint: str = "general"
 
 
+COLLECTION_TIMELINE_STAGES: tuple[tuple[str, str], ...] = (
+    ("api_authentication", "API authentication"),
+    ("free_quota_verification", "Free quota verification"),
+    ("popular_asset_discovery", "Popular asset discovery"),
+    ("candidate_selection", "Candidate selection"),
+    ("asset_downloading", "Asset downloading"),
+    ("file_verification", "File verification"),
+    ("blender_inspection", "Blender inspection"),
+    ("categorization", "Categorization"),
+    ("database_registration", "Database registration"),
+    ("google_drive_sync", "Google Drive synchronization"),
+)
+
+
+def make_default_collection_stages() -> list[dict[str, Any]]:
+    return [
+        {"id": sid, "label": lbl, "status": "PENDING", "started_at": None, "completed_at": None, "detail": None}
+        for sid, lbl in COLLECTION_TIMELINE_STAGES
+    ]
+
+
+class CollectionRulesConfig(BaseModel):
+    daily_target: int = Field(default=7, ge=1, le=50)
+    preferred_categories: list[str] = Field(default_factory=list)
+    excluded_categories: list[str] = Field(default_factory=list)
+    preferred_licenses: list[str] = Field(default_factory=list)
+    min_downloads: int = Field(default=0, ge=0)
+    preferred_modeling_styles: list[str] = Field(default_factory=list)
+    preferred_poly_complexity: str = "any"  # any | low-poly | mid-poly | high-poly
+    preferred_file_format: str = "blend"  # blend | fbx | glb | obj | any
+    diversity_enabled: bool = True
+    max_per_category_per_cycle: int = Field(default=2, ge=1, le=20)
+    collection_time: str = "03:00"
+    timezone: str = "Europe/London"
+    excluded_candidate_ids: list[int] = Field(default_factory=list)
+    scope: str = "permanent"  # permanent | next_run
+
+
 class CollectionCycleRecord(BaseModel):
     cycle_id: str
     cycle_date: str
@@ -427,9 +504,45 @@ class CollectionCycleRecord(BaseModel):
     shortage_reason: Optional[str] = None
     log_path: Optional[str] = None
     error_message: Optional[str] = None
+    current_stage: str = ""
+    stages: list[dict[str, Any]] = Field(default_factory=list)
+    rules_snapshot: dict[str, Any] = Field(default_factory=dict)
+    paused: bool = False
+    cancel_requested: bool = False
     started_at: str = Field(default_factory=utc_now_iso)
     completed_at: Optional[str] = None
     updated_at: str = Field(default_factory=utc_now_iso)
+
+
+class CollectionScheduleConfig(BaseModel):
+    enabled: bool = True
+    frequency: str = "daily"
+    collection_time: str = "03:00"
+    timezone: str = "Europe/London"
+    target_downloads: int = 7
+    free_downloads_only: bool = True
+    automatic_credit_spending: bool = False
+    resume_missed_jobs: bool = True
+
+
+class SchedulerNotificationEvent(BaseModel):
+    event_id: str
+    cycle_id: Optional[str] = None
+    cycle_date: Optional[str] = None
+    trigger_type: str = "scheduled"
+    event_type: str = "CYCLE_COMPLETED"
+    scheduled_time: Optional[str] = None
+    started_at: str = Field(default_factory=utc_now_iso)
+    completed_at: Optional[str] = None
+    status: str = "COMPLETED"
+    downloaded_count: int = 0
+    failed_count: int = 0
+    free_allowance_remaining: Optional[int] = None
+    assets_selected: list[dict[str, Any]] = Field(default_factory=list)
+    errors: list[str] = Field(default_factory=list)
+    next_scheduled_run: Optional[str] = None
+    message: str = ""
+    created_at: str = Field(default_factory=utc_now_iso)
 
 
 class DownloadQueueItem(BaseModel):

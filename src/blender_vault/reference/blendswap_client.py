@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import random
+import shutil
 import threading
 import time
 from datetime import datetime, timezone
@@ -306,30 +307,65 @@ class BlendSwapClient:
         payload = self._request_json("GET", "/me")
         data = payload.get("data") if isinstance(payload.get("data"), dict) else payload
         rate = data.get("rate_limit") if isinstance(data.get("rate_limit"), dict) else {}
+        rate_limits = data.get("rate_limits") if isinstance(data.get("rate_limits"), dict) else {}
+        ctx_acct = (
+            (data.get("context") or {}).get("account")
+            if isinstance((data.get("context") or {}).get("account"), dict)
+            else {}
+        )
 
         free_remaining = _extract_first_int(
             data,
-            ("free_downloads_remaining", "free_downloads_left", "daily_free_remaining", "remaining_free_downloads"),
-            default=0,
+            (
+                "free_downloads_remaining",
+                "api_free_downloads_remaining_today",
+                "free_downloads_remaining_today",
+                "free_downloads_left",
+                "daily_free_remaining",
+                "remaining_free_downloads",
+            ),
+            default=_extract_first_int(
+                ctx_acct,
+                ("free_downloads_remaining_today", "free_downloads_remaining"),
+                default=0,
+            ),
         )
         free_limit = _extract_first_int(
             data,
-            ("free_downloads_limit", "daily_free_limit", "daily_allowance", "free_limit"),
-            default=7,
+            (
+                "free_downloads_limit",
+                "api_download_cap",
+                "free_downloads_per_day",
+                "daily_free_limit",
+                "daily_allowance",
+                "free_limit",
+            ),
+            default=_extract_first_int(ctx_acct, ("free_downloads_per_day", "free_downloads_limit"), default=7),
         )
         credits_bal = _extract_first_int(data, ("credits", "credit_balance", "credits_remaining", "balance"), default=0)
-        dl_cost = _extract_first_int(data, ("download_credit_cost", "credit_cost", "credits_per_download"), default=10)
+        dl_cost = _extract_first_int(
+            data,
+            ("download_credit_cost", "download_credits", "download_cost_credits", "credit_cost", "credits_per_download"),
+            default=10,
+        )
+
+        req_day_limit = _parse_int(rate.get("limit")) or _parse_int(rate_limits.get("requests_per_day"))
+        req_today = _parse_int(rate_limits.get("requests_today"))
+        req_day_rem = (
+            _parse_int(rate.get("remaining"))
+            or (max(0, req_day_limit - req_today) if (req_day_limit is not None and req_today is not None) else None)
+        )
 
         return BlendSwapAccountStatus(
             connected=True,
             username=data.get("username") or (data.get("user") or {}).get("username"),
-            plan=data.get("plan") or data.get("tier"),
+            plan=data.get("plan") or data.get("tier") or ctx_acct.get("plan"),
             credits=credits_bal,
             free_downloads_remaining=max(0, free_remaining),
             free_downloads_limit=max(1, free_limit),
             download_credit_cost=max(1, dl_cost),
-            rate_limit_limit=_parse_int(rate.get("limit")) or self.last_rate_limit.get("limit"),
-            rate_limit_remaining=_parse_int(rate.get("remaining")) or self.last_rate_limit.get("remaining"),
+            rate_limit_limit=req_day_limit or self.last_rate_limit.get("limit"),
+            rate_limit_remaining=req_day_rem if req_day_rem is not None else self.last_rate_limit.get("remaining"),
             rate_limit_reset=_parse_int(rate.get("reset")) or self.last_rate_limit.get("reset"),
             raw=data,
         )
@@ -545,8 +581,26 @@ class BlendSwapClient:
 
         sha256 = compute_sha256(part_path)
         md5 = compute_md5(part_path)
-        part_path.replace(dest_path)
+        self._replace_file_with_retry(part_path, dest_path)
         return actual_size, sha256, md5
+
+    @staticmethod
+    def _replace_file_with_retry(src: Path, dst: Path, max_attempts: int = 8) -> None:
+        """Replace dst with src, retrying briefly on Windows AV/indexer transient file locks (WinError 32)."""
+        for attempt in range(1, max_attempts + 1):
+            try:
+                src.replace(dst)
+                return
+            except PermissionError:
+                if attempt < max_attempts:
+                    time.sleep(0.25 * attempt)
+                    continue
+                shutil.copy2(src, dst)
+                try:
+                    src.unlink(missing_ok=True)
+                except PermissionError:
+                    pass
+                return
 
     def download_with_refresh(
         self,

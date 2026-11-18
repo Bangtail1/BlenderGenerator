@@ -61,6 +61,31 @@ class DuplicateAssetError(ValueError):
         self.existing_version = existing_version
 
 
+class DuplicateGenerationJobError(ValueError):
+    """Raised when an identical active generation job is already queued or running."""
+
+    def __init__(self, message: str, existing_job_id: str, existing_asset_id: str) -> None:
+        super().__init__(message)
+        self.existing_job_id = existing_job_id
+        self.existing_asset_id = existing_asset_id
+
+
+class JobCancelledError(RuntimeError):
+    """Raised when a user cancels an active generation job."""
+
+
+def _default_generation_stages(has_roblox: bool) -> list[dict[str, Any]]:
+    stages = [
+        {"id": "generation", "label": "Blender 3D Geometry Generation", "status": "PENDING", "started_at": None, "completed_at": None, "detail": None},
+        {"id": "technical_qa", "label": "Technical Geometry & GLB Round-Trip QA", "status": "PENDING", "started_at": None, "completed_at": None, "detail": None},
+        {"id": "visual_qa", "label": "Multi-Angle Render & Visual QA", "status": "PENDING", "started_at": None, "completed_at": None, "detail": None},
+    ]
+    if has_roblox:
+        stages.append({"id": "roblox_qa", "label": "Roblox Export & 100-Point QA", "status": "PENDING", "started_at": None, "completed_at": None, "detail": None})
+    stages.append({"id": "ready_for_approval", "label": "Vault Handoff (Awaiting Approval)", "status": "PENDING", "started_at": None, "completed_at": None, "detail": None})
+    return stages
+
+
 def infer_category_from_prompt(prompt: str, template_id: Optional[str] = None) -> str:
     text = f"{prompt} {template_id or ''}".lower()
     if any(k in text for k in ("chair", "table", "desk", "sofa", "bench", "stool", "cabinet", "shelf")):
@@ -130,17 +155,48 @@ class AssetPipelineService:
             self.roblox_workflow = None
 
     # ------------------------------------------------------------------
-    # Procedural Asset Generation
+    # Procedural Asset Generation (Sync & Async Studio Queue)
     # ------------------------------------------------------------------
-    def generate_procedural_asset(self, req: GenerateAssetRequest) -> AssetRecord:
+    def _prepare_procedural_job(
+        self,
+        req: GenerateAssetRequest,
+        *,
+        check_duplicate_active: bool = False,
+    ) -> tuple[AssetRecord, AssetVersion, str, dict[str, Any]]:
         category = req.category if req.category in STANDARD_CATEGORIES else infer_category_from_prompt(req.prompt, req.template_id)
         profile = req.geometry_profile or CATEGORY_TO_DEFAULT_PROFILE.get(category, GeometryProfile.GENERAL)
 
         raw_name = (req.name or "").strip()
         if not raw_name:
-            # Derive clean short title from prompt
             words = [w for w in req.prompt.strip().split() if w.isalnum()]
             raw_name = " ".join(words[:5]).title() if words else "Procedural Asset"
+
+        sig = {
+            "prompt": req.prompt.strip(),
+            "name": raw_name,
+            "category": category,
+            "template_id": req.template_id,
+            "complexity": (req.complexity or "medium").lower(),
+            "poly_budget": req.poly_budget,
+            "visual_style": req.visual_style,
+            "additional_instructions": req.additional_instructions.strip(),
+            "export_format": req.export_format,
+        }
+        if check_duplicate_active:
+            for j in self.db.list_jobs(limit=50):
+                if j.get("job_type") == "generate_procedural" and j.get("status") in ("QUEUED", "RUNNING"):
+                    jp = j.get("params") or {}
+                    if (
+                        jp.get("prompt") == sig["prompt"]
+                        and jp.get("name") == sig["name"]
+                        and jp.get("category") == sig["category"]
+                        and jp.get("complexity") == sig["complexity"]
+                    ):
+                        raise DuplicateGenerationJobError(
+                            f"An identical generation job ({j['job_id']}) is already {j['status']}.",
+                            existing_job_id=j["job_id"],
+                            existing_asset_id=j["asset_id"],
+                        )
 
         asset_id = uuid.uuid4().hex[:12]
         slug = slugify_name(raw_name)
@@ -171,17 +227,98 @@ class AssetPipelineService:
         self.db.create_asset_with_version(asset, version)
 
         job_id = uuid.uuid4().hex[:10]
-        work_dir = (self.settings.tmp_dir / f"job_{job_id}").resolve()
-        work_dir.mkdir(parents=True, exist_ok=True)
+        stages = _default_generation_stages(self.roblox_registrar is not None)
         self.db.record_job(
             job_id=job_id,
             asset_id=asset_id,
             version=1,
             job_type="generate_procedural",
-            status="RUNNING",
-            stage="generation",
+            status="QUEUED",
+            stage="QUEUED",
+            params={**sig, "request": req.model_dump()},
+            stages=stages,
+        )
+        return asset, version, job_id, stages
+
+    def enqueue_generation_job(self, req: GenerateAssetRequest) -> tuple[AssetRecord, dict[str, Any]]:
+        """Create DB-backed asset + QUEUED generation job for background execution."""
+        asset, _, job_id, _ = self._prepare_procedural_job(req, check_duplicate_active=True)
+        job = self.db.get_job(job_id) or {"job_id": job_id, "asset_id": asset.asset_id, "status": "QUEUED"}
+        return asset, job
+
+    def execute_generation_job(self, job_id: str, asset_id: str, req: GenerateAssetRequest) -> AssetRecord:
+        """Run a previously queued generation job to completion with real stage tracking."""
+        asset = self.db.get_asset(asset_id)
+        version = self.db.get_version(asset_id, 1)
+        job = self.db.get_job(job_id)
+        if not asset or not version or not job:
+            raise KeyError(f"Queued generation job '{job_id}' or asset '{asset_id}' not found.")
+        stages = job.get("stages") or _default_generation_stages(self.roblox_registrar is not None)
+        return self._run_procedural_generation(asset, version, job_id, stages, req)
+
+    def generate_procedural_asset(self, req: GenerateAssetRequest) -> AssetRecord:
+        """Synchronous generation entry point (preserved for CLI, tests, and /api/assets/generate)."""
+        asset, version, job_id, stages = self._prepare_procedural_job(req, check_duplicate_active=False)
+        return self._run_procedural_generation(asset, version, job_id, stages, req)
+
+    def _update_job_stage(
+        self,
+        job_id: str,
+        asset_id: str,
+        stages: list[dict[str, Any]],
+        stage_id: str,
+        stage_status: str,
+        *,
+        job_status: str = "RUNNING",
+        detail: Optional[str] = None,
+        error_message: Optional[str] = None,
+        started_at: Optional[str] = None,
+        completed_at: Optional[str] = None,
+    ) -> None:
+        now = utc_now_iso()
+        for s in stages:
+            if s["id"] == stage_id:
+                s["status"] = stage_status
+                if stage_status == "RUNNING" and not s.get("started_at"):
+                    s["started_at"] = now
+                if stage_status in ("COMPLETED", "FAILED", "CANCELLED", "SKIPPED"):
+                    s["completed_at"] = now
+                if detail is not None:
+                    s["detail"] = detail
+                break
+        self.db.record_job(
+            job_id=job_id,
+            asset_id=asset_id,
+            version=1,
+            job_type="generate_procedural",
+            status=job_status,
+            stage=stage_id,
+            stages=stages,
+            error_message=error_message,
+            started_at=started_at,
+            completed_at=completed_at,
         )
 
+    def _check_job_cancelled(self, job_id: str) -> None:
+        j = self.db.get_job(job_id)
+        if j and j.get("cancel_requested"):
+            raise JobCancelledError(f"Generation job '{job_id}' was cancelled by user.")
+
+    def _run_procedural_generation(
+        self,
+        asset: AssetRecord,
+        version: AssetVersion,
+        job_id: str,
+        stages: list[dict[str, Any]],
+        req: GenerateAssetRequest,
+    ) -> AssetRecord:
+        asset_id = asset.asset_id
+        slug = asset.slug
+        raw_name = asset.name
+        started_now = utc_now_iso()
+
+        work_dir = (self.settings.tmp_dir / f"job_{job_id}").resolve()
+        work_dir.mkdir(parents=True, exist_ok=True)
         vdir = self.storage.version_dir(asset_id, 1).resolve()
         target_blend = vdir / f"{slug}.blend"
         target_glb = vdir / f"{slug}.glb"
@@ -204,14 +341,26 @@ class AssetPipelineService:
             except Exception as exc:
                 logger.warning("Roblox pre-generation registration failed for %s: %s", asset_id, exc)
 
+        current_stage = "generation"
         try:
+            self._check_job_cancelled(job_id)
+            self._update_job_stage(job_id, asset_id, stages, "generation", "RUNNING", started_at=started_now)
+
+            merged_params = dict(req.params or {})
+            merged_params["complexity"] = (req.complexity or "medium").lower()
+            if req.poly_budget is not None:
+                merged_params["poly_budget"] = req.poly_budget
+            if req.additional_instructions.strip():
+                merged_params["additional_instructions"] = req.additional_instructions.strip()
+            merged_params["visual_style"] = req.visual_style
+
             gen_res = self.runner.run_script(
                 "generate.py",
                 {
                     "asset_name": raw_name,
                     "prompt": req.prompt,
                     "template_id": req.template_id,
-                    "params": req.params,
+                    "params": merged_params,
                     "output_blend": str(target_blend),
                     "output_glb": str(target_glb),
                 },
@@ -255,6 +404,14 @@ class AssetPipelineService:
                     logger.warning("Optional Roblox %s export failed for %s: %s", desired_export_fmt, asset_id, exp_exc)
 
             self.db.update_version(version)
+            self._update_job_stage(
+                job_id,
+                asset_id,
+                stages,
+                "generation",
+                "COMPLETED",
+                detail=f"{gen_res.get('mesh_object_count', 0)} mesh object(s) created",
+            )
 
             if roblox_rec is not None and self.roblox_registrar is not None:
                 self._update_roblox_generated_files(
@@ -266,10 +423,13 @@ class AssetPipelineService:
                     sha256=version.sha256,
                 )
 
-            self._run_qa_and_visual_stages(asset, version, work_dir, job_id)
-            self.db.record_job(job_id=job_id, asset_id=asset_id, version=1, job_type="generate_procedural", status="COMPLETED", stage=version.status.value)
+            self._check_job_cancelled(job_id)
+            current_stage = "technical_qa"
+            self._run_qa_and_visual_stages(asset, version, work_dir, job_id, stages=stages)
 
             if roblox_rec is not None and self.roblox_registrar is not None:
+                current_stage = "roblox_qa"
+                self._update_job_stage(job_id, asset_id, stages, "roblox_qa", "RUNNING")
                 self._sync_roblox_after_qa(roblox_rec.asset_id, asset, version)
                 if req.sync_to_drive_pending and version.status != AssetStatus.FAILED and self.roblox_sync is not None:
                     self.roblox_sync.sync_asset_version(
@@ -278,21 +438,63 @@ class AssetPipelineService:
                         require_approved_for_production=False,
                         queue_on_failure=True,
                     )
-        except Exception as exc:
-            logger.exception("Procedural generation pipeline failed for %s", asset_id)
+                self._update_job_stage(job_id, asset_id, stages, "roblox_qa", "COMPLETED")
+
+            if version.status == AssetStatus.FAILED:
+                self._update_job_stage(
+                    job_id,
+                    asset_id,
+                    stages,
+                    "ready_for_approval",
+                    "FAILED",
+                    job_status="FAILED",
+                    error_message=version.error_message,
+                    completed_at=utc_now_iso(),
+                )
+            else:
+                self._update_job_stage(
+                    job_id,
+                    asset_id,
+                    stages,
+                    "ready_for_approval",
+                    "COMPLETED",
+                    job_status="COMPLETED",
+                    detail=version.status.value,
+                    completed_at=utc_now_iso(),
+                )
+        except JobCancelledError as exc:
+            logger.info("Generation job %s cancelled for asset %s", job_id, asset_id)
             version.status = AssetStatus.FAILED
-            version.failed_stage = version.failed_stage or "generation"
+            version.failed_stage = "cancelled"
             version.error_message = str(exc)
             self.db.update_version(version)
             self.storage.write_version_artifacts(asset, version)
-            self.db.record_job(
-                job_id=job_id,
-                asset_id=asset_id,
-                version=1,
-                job_type="generate_procedural",
-                status="FAILED",
-                stage=version.failed_stage,
+            self._update_job_stage(
+                job_id,
+                asset_id,
+                stages,
+                current_stage,
+                "CANCELLED",
+                job_status="CANCELLED",
                 error_message=str(exc),
+                completed_at=utc_now_iso(),
+            )
+        except Exception as exc:
+            logger.exception("Procedural generation pipeline failed for %s", asset_id)
+            version.status = AssetStatus.FAILED
+            version.failed_stage = version.failed_stage or current_stage
+            version.error_message = str(exc)
+            self.db.update_version(version)
+            self.storage.write_version_artifacts(asset, version)
+            self._update_job_stage(
+                job_id,
+                asset_id,
+                stages,
+                current_stage,
+                "FAILED",
+                job_status="FAILED",
+                error_message=str(exc),
+                completed_at=utc_now_iso(),
             )
             if roblox_rec is not None and self.roblox_registrar is not None:
                 try:
@@ -514,7 +716,15 @@ class AssetPipelineService:
     # ------------------------------------------------------------------
     # Technical QA + Multi-Angle Rendering + Stage 1 Visual QA
     # ------------------------------------------------------------------
-    def _run_qa_and_visual_stages(self, asset: AssetRecord, version: AssetVersion, work_dir: Path, job_id: str) -> None:
+    def _run_qa_and_visual_stages(
+        self,
+        asset: AssetRecord,
+        version: AssetVersion,
+        work_dir: Path,
+        job_id: str,
+        *,
+        stages: Optional[list[dict[str, Any]]] = None,
+    ) -> None:
         if not version.blend_path or not Path(version.blend_path).is_file():
             raise RuntimeError("Missing .blend file before QA stage.")
 
@@ -525,7 +735,10 @@ class AssetPipelineService:
         version.failed_stage = None
         version.error_message = None
         self.db.update_version(version)
-        self.db.record_job(job_id=job_id, asset_id=asset.asset_id, version=version.version, job_type="qa_pipeline", status="RUNNING", stage="technical_qa")
+        if stages is not None:
+            self._update_job_stage(job_id, asset.asset_id, stages, "technical_qa", "RUNNING")
+        else:
+            self.db.record_job(job_id=job_id, asset_id=asset.asset_id, version=version.version, job_type="qa_pipeline", status="RUNNING", stage="technical_qa")
 
         roundtrip_glb = (work_dir / "roundtrip_test.glb").resolve()
         try:
@@ -540,6 +753,8 @@ class AssetPipelineService:
             version.error_message = str(exc)
             self.db.update_version(version)
             self.storage.write_version_artifacts(asset, version)
+            if stages is not None:
+                self._update_job_stage(job_id, asset.asset_id, stages, "technical_qa", "FAILED", error_message=str(exc))
             return
 
         qa_report = evaluate_technical_qa(raw_qa, asset.geometry_profile)
@@ -551,10 +766,33 @@ class AssetPipelineService:
         if qa_report.blender_version:
             version.blender_version = qa_report.blender_version
         self.db.update_version(version)
+        if stages is not None:
+            self._update_job_stage(
+                job_id,
+                asset.asset_id,
+                stages,
+                "technical_qa",
+                "FAILED" if qa_report.status == TechnicalQAStatus.FAIL else "COMPLETED",
+                detail=qa_report.status.value,
+            )
 
         # Even if technical QA failed, render visual evidence if mesh geometry exists so humans can inspect failure!
         if qa_report.mesh_object_count > 0:
+            self._check_job_cancelled(job_id)
+            if stages is not None:
+                self._update_job_stage(job_id, asset.asset_id, stages, "visual_qa", "RUNNING")
             self._run_visual_stage(asset, version, blend_path, work_dir, job_id, tech_failed=(qa_report.status == TechnicalQAStatus.FAIL))
+            if stages is not None:
+                self._update_job_stage(
+                    job_id,
+                    asset.asset_id,
+                    stages,
+                    "visual_qa",
+                    "COMPLETED",
+                    detail=version.visual_qa.status.value if version.visual_qa else None,
+                )
+        elif stages is not None:
+            self._update_job_stage(job_id, asset.asset_id, stages, "visual_qa", "SKIPPED", detail="No mesh geometry")
 
         if qa_report.status == TechnicalQAStatus.FAIL:
             version.status = AssetStatus.FAILED
@@ -745,14 +983,50 @@ class AssetPipelineService:
             self.upload_to_drive(asset_id, version_num)
             return self.db.get_asset(asset_id) or asset
 
-        # If import failed before creating .blend, retry from preserved original
-        if (not version.blend_path or not Path(version.blend_path).is_file()) and version.source_original_path:
-            src = Path(version.source_original_path)
-            if src.is_file():
-                job_id = uuid.uuid4().hex[:10]
-                work_dir = (self.settings.tmp_dir / f"retry_{job_id}").resolve()
-                work_dir.mkdir(parents=True, exist_ok=True)
-                try:
+        job_id = uuid.uuid4().hex[:10]
+        stages = [
+            {
+                "id": "technical_qa",
+                "label": "Technical Geometry & GLB Round-Trip QA",
+                "status": "PENDING",
+                "started_at": None,
+                "completed_at": None,
+                "detail": None,
+            },
+            {
+                "id": "visual_qa",
+                "label": "Multi-Angle Render & Visual QA",
+                "status": "PENDING",
+                "started_at": None,
+                "completed_at": None,
+                "detail": None,
+            },
+            {
+                "id": "ready_for_approval",
+                "label": "Vault Handoff (Awaiting Approval)",
+                "status": "PENDING",
+                "started_at": None,
+                "completed_at": None,
+                "detail": None,
+            },
+        ]
+        self.db.record_job(
+            job_id=job_id,
+            asset_id=asset.asset_id,
+            version=version.version,
+            job_type="qa_pipeline",
+            status="RUNNING",
+            stage="technical_qa",
+            stages=stages,
+            started_at=utc_now_iso(),
+        )
+        work_dir = (self.settings.tmp_dir / f"retry_{job_id}").resolve()
+        work_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            # If import failed before creating .blend, retry from preserved original
+            if (not version.blend_path or not Path(version.blend_path).is_file()) and version.source_original_path:
+                src = Path(version.source_original_path)
+                if src.is_file():
                     vdir = self.storage.version_dir(asset_id, version_num).resolve()
                     target_blend = vdir / f"{asset.slug}.blend"
                     target_glb = vdir / f"{asset.slug}.glb"
@@ -765,16 +1039,62 @@ class AssetPipelineService:
                     version.glb_path = str(target_glb) if target_glb.is_file() else None
                     version.blender_version = str(imp_res.get("blender_version", ""))
                     self.db.update_version(version)
-                    self._run_qa_and_visual_stages(asset, version, work_dir, job_id)
-                finally:
-                    self._cleanup_work_dir(work_dir)
-                return self.db.get_asset(asset_id) or asset
 
-        job_id = uuid.uuid4().hex[:10]
-        work_dir = (self.settings.tmp_dir / f"retry_{job_id}").resolve()
-        work_dir.mkdir(parents=True, exist_ok=True)
-        try:
-            self._run_qa_and_visual_stages(asset, version, work_dir, job_id)
+            self._run_qa_and_visual_stages(asset, version, work_dir, job_id, stages=stages)
+            refreshed = self.db.get_version(asset_id, version_num) or version
+            if refreshed.status == AssetStatus.FAILED:
+                self._update_job_stage(
+                    job_id,
+                    asset.asset_id,
+                    stages,
+                    "ready_for_approval",
+                    "FAILED",
+                    detail=refreshed.failed_stage or "technical_qa",
+                    error_message=refreshed.error_message,
+                )
+                self.db.record_job(
+                    job_id=job_id,
+                    asset_id=asset.asset_id,
+                    version=version.version,
+                    job_type="qa_pipeline",
+                    status="FAILED",
+                    stage=refreshed.failed_stage or "technical_qa",
+                    error_message=refreshed.error_message,
+                    stages=stages,
+                    completed_at=utc_now_iso(),
+                )
+            else:
+                self._update_job_stage(
+                    job_id,
+                    asset.asset_id,
+                    stages,
+                    "ready_for_approval",
+                    "COMPLETED",
+                    detail=refreshed.status.value,
+                )
+                self.db.record_job(
+                    job_id=job_id,
+                    asset_id=asset.asset_id,
+                    version=version.version,
+                    job_type="qa_pipeline",
+                    status="COMPLETED",
+                    stage="ready_for_approval",
+                    stages=stages,
+                    completed_at=utc_now_iso(),
+                )
+        except Exception as exc:
+            self.db.record_job(
+                job_id=job_id,
+                asset_id=asset.asset_id,
+                version=version.version,
+                job_type="qa_pipeline",
+                status="FAILED",
+                stage="qa_pipeline",
+                error_message=str(exc),
+                stages=stages,
+                completed_at=utc_now_iso(),
+            )
+            raise
         finally:
             self._cleanup_work_dir(work_dir)
         return self.db.get_asset(asset_id) or asset

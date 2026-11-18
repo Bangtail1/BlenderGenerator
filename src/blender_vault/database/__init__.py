@@ -19,6 +19,8 @@ from .models import (
     QAGrade,
     QAReportRecord,
     RobloxAssetRecord,
+    StudioVerificationRecord,
+    StudioVerificationStatus,
     ValidationStatus,
     VisualStyle,
     format_asset_id,
@@ -31,6 +33,7 @@ from .repositories import (
     CategoryRepository,
     LogRepository,
     QAReportRepository,
+    StudioVerificationRepository,
     VersionRepository,
 )
 
@@ -58,6 +61,9 @@ __all__ = [
     "RobloxAssetRecord",
     "RobloxAssetRegistrar",
     "RobloxDatabaseManager",
+    "StudioVerificationRecord",
+    "StudioVerificationRepository",
+    "StudioVerificationStatus",
     "ValidationStatus",
     "VersionRepository",
     "VisualStyle",

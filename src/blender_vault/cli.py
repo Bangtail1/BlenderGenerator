@@ -23,6 +23,7 @@ from .reference.ref_db import ReferenceDatabase
 from .reference.reference_drive_sync import ReferenceDriveSyncService
 from .reference.reference_storage import ReferenceStorage
 from .reference.scheduler import DailyCollectionScheduler
+from .reference.windows_task_scheduler import DEFAULT_WINDOWS_TASK_NAME, WindowsTaskSchedulerManager
 from .reports.report_generator import QAReportGenerator
 from .roblox_qa import RobloxQAEngine, RobloxWorkflowService
 from .services.gdrive_service import GoogleDriveSyncService
@@ -80,7 +81,18 @@ def main() -> None:
     collect_p = sub.add_parser("collect-daily", help="Run (or recover) a single BlendSwap reference collection cycle")
     collect_p.add_argument("--max-downloads", type=int, default=None)
     collect_p.add_argument("--no-drive-sync", action="store_true")
+    collect_p.add_argument(
+        "--scheduled",
+        action="store_true",
+        help="Run due/reset/missed-run check non-destructively (used by Windows Task Scheduler).",
+    )
     sub.add_parser("scheduler", help="Run the persistent daily BlendSwap collection scheduler in foreground")
+    sched_inst_p = sub.add_parser("scheduler-install", help="Register persistent Windows Task Scheduler job for daily 03:00 collection")
+    sched_inst_p.add_argument("--task-name", default=DEFAULT_WINDOWS_TASK_NAME)
+    sched_uninst_p = sub.add_parser("scheduler-uninstall", help="Remove the Windows Task Scheduler job")
+    sched_uninst_p.add_argument("--task-name", default=DEFAULT_WINDOWS_TASK_NAME)
+    sched_st_p = sub.add_parser("scheduler-status", help="Inspect schedule config, Windows Task Scheduler status, and latest notification")
+    sched_st_p.add_argument("--task-name", default=DEFAULT_WINDOWS_TASK_NAME)
     sub.add_parser("ref-reindex", help="Rebuild Branch 2 SQLite tables from reference_library JSON files")
 
     bench_p = sub.add_parser("benchmark", help="Benchmark a Branch 1 local asset against Branch 2 references")
@@ -109,6 +121,25 @@ def main() -> None:
 
     sub.add_parser("roblox-retry-drive", help="Retry pending queued Google Drive uploads")
     sub.add_parser("roblox-status", help="Show Roblox DB integrity, department counts, and assets summary")
+
+    r_bk = sub.add_parser("roblox-backup", help="Create a verified online SQLite backup in data/backups")
+    r_bk.add_argument("--reason", default="manual")
+
+    r_sv = sub.add_parser(
+        "roblox-studio-verify",
+        help="Record manual Roblox Studio verification checks for a specific asset version",
+    )
+    r_sv.add_argument("asset_id", help="Roblox asset_id")
+    r_sv.add_argument("--version", type=int, default=None, help="Target version number (defaults to current_version)")
+    r_sv.add_argument("--verifier", required=True, help="Human verifier name")
+    r_sv.add_argument("--fbx-import", required=True, choices=["pass", "fail"], help="FBX import result in Studio")
+    r_sv.add_argument("--orientation", required=True, choices=["pass", "fail"], help="Orientation check in Studio")
+    r_sv.add_argument("--scale", required=True, choices=["pass", "fail"], help="Scale in studs vs R15 check")
+    r_sv.add_argument("--materials", required=True, choices=["pass", "fail"], help="SurfaceAppearance/material rendering")
+    r_sv.add_argument("--collision", required=True, choices=["pass", "fail"], help="Playtest CollisionFidelity check")
+    r_sv.add_argument("--warning", action="append", default=[], help="Studio import warning (repeatable)")
+    r_sv.add_argument("--error", action="append", default=[], help="Studio import error (repeatable)")
+    r_sv.add_argument("--notes", default="", help="Optional verification notes")
 
     args = parser.parse_args()
     settings = Settings()
@@ -177,12 +208,33 @@ def main() -> None:
         try:
             if args.no_drive_sync:
                 settings.reference_drive_sync_enabled = False
-            cycle = scheduler.check_and_run_due(
-                force=True,
-                trigger_type="manual_cli",
-                max_downloads=args.max_downloads,
-            )
-            print(json.dumps(cycle.model_dump() if cycle else {"status": "NO_ACTION"}, indent=2))
+            if args.scheduled:
+                cycle = scheduler.check_and_run_due(
+                    force=False,
+                    trigger_type="windows_task_scheduler",
+                    max_downloads=args.max_downloads,
+                )
+                if cycle is not None:
+                    print(json.dumps(cycle.model_dump(), indent=2))
+                else:
+                    cfg_now = scheduler.get_schedule_config()
+                    print(
+                        json.dumps(
+                            {
+                                "status": cfg_now.get("scheduler_state", "NO_ACTION"),
+                                "next_run_at": cfg_now.get("next_run_at"),
+                                "postponed_reason": cfg_now.get("postponed_reason"),
+                            },
+                            indent=2,
+                        )
+                    )
+            else:
+                cycle = scheduler.check_and_run_due(
+                    force=True,
+                    trigger_type="manual_cli",
+                    max_downloads=args.max_downloads,
+                )
+                print(json.dumps(cycle.model_dump() if cycle else {"status": "NO_ACTION"}, indent=2))
         finally:
             client.close()
     elif args.command == "scheduler":
@@ -193,6 +245,41 @@ def main() -> None:
                 time.sleep(5)
         except KeyboardInterrupt:
             scheduler.stop()
+            client.close()
+    elif args.command == "scheduler-install":
+        _, _, _, _, _, _, client, _, scheduler, _ = _build_branch2_services(settings)
+        try:
+            cfg_now = scheduler.get_schedule_config()
+            win_mgr = WindowsTaskSchedulerManager(settings, task_name=args.task_name)
+            res = win_mgr.install_task(
+                collection_time=cfg_now["collection_time"],
+                timezone_name=cfg_now["timezone"],
+                enabled=bool(cfg_now["enabled"]),
+                resume_missed_jobs=bool(cfg_now.get("resume_missed_jobs", True)),
+                recheck_interval_minutes=int(cfg_now.get("reset_recheck_minutes", 15)),
+            )
+            print(json.dumps(res, indent=2))
+        finally:
+            client.close()
+    elif args.command == "scheduler-uninstall":
+        win_mgr = WindowsTaskSchedulerManager(settings, task_name=args.task_name)
+        print(json.dumps(win_mgr.uninstall_task(), indent=2))
+    elif args.command == "scheduler-status":
+        _, _, _, _, _, _, client, _, scheduler, _ = _build_branch2_services(settings)
+        try:
+            win_mgr = WindowsTaskSchedulerManager(settings, task_name=args.task_name)
+            latest_evt = scheduler.get_latest_notification()
+            print(
+                json.dumps(
+                    {
+                        "schedule": scheduler.get_schedule_config(),
+                        "windows_task_scheduler": win_mgr.query_task_status(),
+                        "latest_notification": latest_evt.model_dump() if latest_evt else None,
+                    },
+                    indent=2,
+                )
+            )
+        finally:
             client.close()
     elif args.command == "ref-reindex":
         db = VaultDatabase(settings.db_path)
@@ -293,24 +380,68 @@ def main() -> None:
     elif args.command == "roblox-retry-drive":
         _, _, sync_mgr, _ = _build_roblox_services(settings)
         print(json.dumps(sync_mgr.retry_pending_uploads(), indent=2))
+    elif args.command == "roblox-backup":
+        registrar = RobloxAssetRegistrar(settings)
+        bpath = registrar.db.create_backup(reason=args.reason)
+        print(
+            json.dumps(
+                {
+                    "backup_path": str(bpath),
+                    "size_bytes": bpath.stat().st_size,
+                    "integrity": registrar.db.verify_integrity(),
+                },
+                indent=2,
+            )
+        )
+    elif args.command == "roblox-studio-verify":
+        _, _, _, wf = _build_roblox_services(settings)
+        res = wf.record_studio_verification(
+            args.asset_id,
+            version_number=args.version,
+            fbx_import_ok=(args.fbx_import == "pass"),
+            orientation_ok=(args.orientation == "pass"),
+            scale_ok=(args.scale == "pass"),
+            material_appearance_ok=(args.materials == "pass"),
+            collision_test_ok=(args.collision == "pass"),
+            verified_by=args.verifier,
+            studio_warnings=args.warning,
+            studio_errors=args.error,
+            notes=args.notes,
+        )
+        print(
+            json.dumps(
+                {
+                    "asset_id": res["asset"].asset_id,
+                    "version_number": res["version"].version_number,
+                    "studio_verification": res["studio_verification"].model_dump(),
+                    "report_paths": {k: str(v) for k, v in res["report_paths"].items()},
+                },
+                indent=2,
+            )
+        )
     elif args.command == "roblox-status":
         registrar = RobloxAssetRegistrar(settings)
+        assets_summary = []
+        for a in registrar.assets.list_assets():
+            cur_v = registrar.versions.get_asset_version(a.asset_id, a.current_version)
+            assets_summary.append(
+                {
+                    "asset_id": a.asset_id,
+                    "asset_name": a.asset_name,
+                    "current_version": a.current_version,
+                    "status": a.production_status.value,
+                    "qa_score": a.qa_score,
+                    "qa_grade": a.qa_grade,
+                    "human_approved": a.human_approved,
+                    "studio_verification_status": cur_v.studio_verification_status if cur_v else "PENDING",
+                    "google_drive_file_id": a.google_drive_file_id,
+                }
+            )
         print(
             json.dumps(
                 {
                     "integrity": registrar.db.verify_integrity(),
-                    "assets": [
-                        {
-                            "asset_id": a.asset_id,
-                            "asset_name": a.asset_name,
-                            "status": a.production_status.value,
-                            "qa_score": a.qa_score,
-                            "qa_grade": a.qa_grade,
-                            "human_approved": a.human_approved,
-                            "google_drive_file_id": a.google_drive_file_id,
-                        }
-                        for a in registrar.assets.list_assets()
-                    ],
+                    "assets": assets_summary,
                     "pending_drive_uploads": len(registrar.logs.list_pending_drive_uploads()),
                 },
                 indent=2,

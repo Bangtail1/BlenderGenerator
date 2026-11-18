@@ -11,12 +11,15 @@ from ..database import (
     AssetRepository,
     CategoryRepository,
     ExportFormat,
+    ImmutableApprovedVersionError,
     LogRepository,
     ProductionStatus,
     QAReportRecord,
     QAReportRepository,
     RobloxAssetRecord,
     RobloxDatabaseManager,
+    StudioVerificationRecord,
+    StudioVerificationRepository,
     VersionRepository,
 )
 from ..hashing import compute_sha256
@@ -50,6 +53,7 @@ class RobloxWorkflowService:
         self.versions = VersionRepository(self.db)
         self.qa_reports = QAReportRepository(self.db)
         self.logs = LogRepository(self.db)
+        self.studio_verifications = StudioVerificationRepository(self.db)
 
         inv_path = settings.roblox_master_inventory_path
         if inv_path.is_file() and len(self.categories.list_categories()) < 40:
@@ -77,6 +81,11 @@ class RobloxWorkflowService:
         version = self.versions.get_asset_version(asset_id, ver_num)
         if not version:
             raise KeyError(f"Version v{ver_num:03d} not found for asset '{asset_id}'.")
+        if version.is_approved:
+            raise ImmutableApprovedVersionError(
+                f"Version v{ver_num:03d} of '{asset_id}' is already APPROVED and immutable. "
+                "Create a new version before re-running QA."
+            )
 
         blend_str = version.blender_source_path or asset.source_blend_path
         if not blend_str or not Path(blend_str).is_file():
@@ -132,13 +141,15 @@ class RobloxWorkflowService:
             )
 
             # Generate QA_Report.json and QA_Report.html with previews
+            existing_studio = self.studio_verifications.get_latest_verification(asset_id, version_id=version.version_id)
             report_paths = self.report_generator.generate_reports(
                 qa_out,
                 final_approval_status=(
                     "AWAITING_HUMAN_APPROVAL" if qa_out.final_status == "QA_PASSED" else "QA_FAILED"
                 ),
-                google_drive_file_id=version.google_drive_file_id or asset.google_drive_file_id,
-                google_drive_url=version.google_drive_url or asset.google_drive_url,
+                google_drive_file_id=version.google_drive_file_id,
+                google_drive_url=version.google_drive_url,
+                studio_verification=existing_studio.model_dump(mode="json") if existing_studio else None,
             )
 
             scores = qa_out.individual_scores
@@ -284,6 +295,7 @@ class RobloxWorkflowService:
 
         # Regenerate QA reports reflecting APPROVED status
         qa_out = RobloxQAOutput.model_validate(latest_qa.details) if latest_qa.details else None
+        existing_studio = self.studio_verifications.get_latest_verification(asset_id, version_id=approved_ver.version_id)
         report_paths: dict[str, Path] = {}
         if qa_out is not None:
             report_paths = self.report_generator.generate_reports(
@@ -293,6 +305,7 @@ class RobloxWorkflowService:
                 approved_at=approved_ver.approved_at,
                 google_drive_file_id=approved_ver.google_drive_file_id,
                 google_drive_url=approved_ver.google_drive_url,
+                studio_verification=existing_studio.model_dump(mode="json") if existing_studio else None,
             )
 
         drive_result: Optional[dict[str, Any]] = None
@@ -342,14 +355,92 @@ class RobloxWorkflowService:
         )
         if not version.is_approved:
             self.versions.update_version(version.version_id, qa_status="REJECTED")
-        latest_qa = self.qa_reports.get_latest_report_for_asset(asset_id)
+        latest_qa = next(
+            (r for r in self.qa_reports.list_reports_for_asset(asset_id) if r.version_id == version.version_id),
+            None,
+        )
         if latest_qa and latest_qa.details:
             qa_out = RobloxQAOutput.model_validate(latest_qa.details)
+            existing_studio = self.studio_verifications.get_latest_verification(asset_id, version_id=version.version_id)
             self.report_generator.generate_reports(
                 qa_out,
                 final_approval_status="REJECTED",
+                google_drive_file_id=version.google_drive_file_id,
+                google_drive_url=version.google_drive_url,
+                studio_verification=existing_studio.model_dump(mode="json") if existing_studio else None,
             )
         return updated
+
+    def record_studio_verification(
+        self,
+        asset_id: str,
+        *,
+        version_number: Optional[int] = None,
+        fbx_import_ok: bool,
+        orientation_ok: bool,
+        scale_ok: bool,
+        material_appearance_ok: bool,
+        collision_test_ok: bool,
+        verified_by: str,
+        studio_warnings: Optional[list[str]] = None,
+        studio_errors: Optional[list[str]] = None,
+        notes: str = "",
+    ) -> dict[str, Any]:
+        """Record actual human Roblox Studio verification checks for a specific asset version."""
+        asset = self.assets.get_asset(asset_id)
+        if not asset:
+            raise KeyError(f"Asset '{asset_id}' not found.")
+        ver_num = version_number if version_number is not None else asset.current_version
+        version = self.versions.get_asset_version(asset_id, ver_num)
+        if not version:
+            raise KeyError(f"Version v{ver_num:03d} not found for '{asset_id}'.")
+
+        rec = self.studio_verifications.record_verification(
+            asset_id,
+            version_number=ver_num,
+            fbx_import_ok=fbx_import_ok,
+            orientation_ok=orientation_ok,
+            scale_ok=scale_ok,
+            material_appearance_ok=material_appearance_ok,
+            collision_test_ok=collision_test_ok,
+            verified_by=verified_by,
+            studio_warnings=studio_warnings,
+            studio_errors=studio_errors,
+            notes=notes,
+        )
+
+        # Refresh reports for this version if a QA report exists
+        ver_report = next(
+            (r for r in self.qa_reports.list_reports_for_asset(asset_id) if r.version_id == version.version_id),
+            None,
+        )
+        report_paths: dict[str, Path] = {}
+        if ver_report and ver_report.details:
+            qa_out = RobloxQAOutput.model_validate(ver_report.details)
+            if version.is_approved:
+                approval_state = "APPROVED"
+            elif version.qa_status == "REJECTED":
+                approval_state = "REJECTED"
+            elif ver_report.final_status == "QA_PASSED":
+                approval_state = "AWAITING_HUMAN_APPROVAL"
+            else:
+                approval_state = "QA_FAILED"
+            report_paths = self.report_generator.generate_reports(
+                qa_out,
+                final_approval_status=approval_state,
+                approved_by=version.approved_by,
+                approved_at=version.approved_at,
+                google_drive_file_id=version.google_drive_file_id,
+                google_drive_url=version.google_drive_url,
+                studio_verification=rec.model_dump(mode="json"),
+            )
+
+        return {
+            "asset": self.assets.get_asset(asset_id),
+            "version": self.versions.get_version(version.version_id),
+            "studio_verification": rec,
+            "report_paths": report_paths,
+        }
 
     def create_modified_version(
         self,

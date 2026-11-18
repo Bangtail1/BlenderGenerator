@@ -26,7 +26,11 @@ class RunCycleBody(BaseModel):
 class UpdateScheduleBody(BaseModel):
     enabled: Optional[bool] = None
     schedule_time: Optional[str] = None
+    collection_time: Optional[str] = None
     timezone: Optional[str] = None
+    frequency: Optional[str] = None
+    target_downloads: Optional[int] = None
+    resume_missed_jobs: Optional[bool] = None
 
 
 class RunBenchmarkBody(BaseModel):
@@ -111,11 +115,30 @@ def build_reference_router(app_state: Any) -> APIRouter:
     @router.post("/assets/{blendswap_id}/open-blender")
     def open_reference_in_blender(blendswap_id: int) -> dict[str, Any]:
         rec = app_state.ref_db.get_reference_asset(blendswap_id)
-        if not rec or not rec.blend_file_path:
+        if not rec:
+            raise HTTPException(status_code=404, detail=f"Reference asset #{blendswap_id} not found.")
+
+        blend_target: Optional[Path] = None
+        if rec.blend_file_path and Path(rec.blend_file_path).is_file():
+            blend_target = Path(rec.blend_file_path).resolve()
+        elif rec.primary_file_path and Path(rec.primary_file_path).is_file():
+            try:
+                blend_target = app_state.ref_inspector.resolve_blend_for_gui(
+                    source_file=Path(rec.primary_file_path),
+                    blendswap_id=blendswap_id,
+                )
+                rec.blend_file_path = str(blend_target)
+                app_state.ref_db.upsert_reference_asset(rec)
+            except FileNotFoundError as exc:
+                raise HTTPException(status_code=404, detail=str(exc)) from exc
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        if not blend_target or not blend_target.is_file():
             raise HTTPException(status_code=404, detail="No native .blend file available locally for this reference.")
         try:
-            pid = launch_in_blender_gui(Path(rec.blend_file_path), app_state.settings.blender_executable)
-            return {"ok": True, "pid": pid, "blend_path": rec.blend_file_path}
+            pid = launch_in_blender_gui(blend_target, app_state.settings.blender_executable)
+            return {"ok": True, "pid": pid, "blend_path": str(blend_target)}
         except Exception as exc:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
 
@@ -196,13 +219,67 @@ def build_reference_router(app_state: Any) -> APIRouter:
         queue = app_state.ref_db.get_queue_for_cycle(cycle_id)
         return {"cycle": cycle.model_dump(), "queue": [q.model_dump() for q in queue]}
 
+    @router.get("/scheduler")
+    def get_scheduler() -> dict[str, Any]:
+        cfg = app_state.ref_scheduler.get_schedule_config()
+        win_mgr = getattr(app_state, "win_task_scheduler", None)
+        return {
+            **cfg,
+            "windows_task_scheduler": win_mgr.query_task_status() if win_mgr else None,
+        }
+
     @router.post("/scheduler")
     def update_scheduler(body: UpdateScheduleBody) -> dict[str, Any]:
         return app_state.ref_scheduler.update_schedule_config(
             enabled=body.enabled,
             schedule_time=body.schedule_time,
+            collection_time=body.collection_time,
             timezone_name=body.timezone,
+            frequency=body.frequency,
+            target_downloads=body.target_downloads,
+            resume_missed_jobs=body.resume_missed_jobs,
         )
+
+    @router.post("/scheduler/pause")
+    def pause_scheduler() -> dict[str, Any]:
+        return app_state.ref_scheduler.pause()
+
+    @router.post("/scheduler/resume")
+    def resume_scheduler() -> dict[str, Any]:
+        return app_state.ref_scheduler.resume()
+
+    @router.get("/scheduler/notifications")
+    def list_scheduler_notifications(limit: int = Query(default=30, ge=1, le=100)) -> dict[str, Any]:
+        events = app_state.ref_scheduler.get_notifications(limit=limit)
+        return {"notifications": [e.model_dump() for e in events]}
+
+    @router.get("/scheduler/windows-task")
+    def get_windows_task_status() -> dict[str, Any]:
+        win_mgr = getattr(app_state, "win_task_scheduler", None)
+        if not win_mgr:
+            raise HTTPException(status_code=404, detail="Windows Task Scheduler manager not initialized.")
+        return win_mgr.query_task_status()
+
+    @router.post("/scheduler/windows-task/install")
+    def install_windows_task() -> dict[str, Any]:
+        win_mgr = getattr(app_state, "win_task_scheduler", None)
+        if not win_mgr:
+            raise HTTPException(status_code=404, detail="Windows Task Scheduler manager not initialized.")
+        cfg = app_state.ref_scheduler.get_schedule_config()
+        return win_mgr.install_task(
+            collection_time=cfg["collection_time"],
+            timezone_name=cfg["timezone"],
+            enabled=bool(cfg["enabled"]),
+            resume_missed_jobs=bool(cfg.get("resume_missed_jobs", True)),
+            recheck_interval_minutes=int(cfg.get("reset_recheck_minutes", 15)),
+        )
+
+    @router.post("/scheduler/windows-task/uninstall")
+    def uninstall_windows_task() -> dict[str, Any]:
+        win_mgr = getattr(app_state, "win_task_scheduler", None)
+        if not win_mgr:
+            raise HTTPException(status_code=404, detail="Windows Task Scheduler manager not initialized.")
+        return win_mgr.uninstall_task()
 
     @router.get("/benchmarks")
     def list_benchmarks(asset_id: Optional[str] = Query(default=None), limit: int = Query(default=50)) -> dict[str, Any]:

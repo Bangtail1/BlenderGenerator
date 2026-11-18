@@ -23,6 +23,7 @@ from .models import (
     ReferenceAssetRecord,
     ReferenceAssetStatus,
     ReferenceInspectionReport,
+    SchedulerNotificationEvent,
 )
 
 
@@ -271,6 +272,28 @@ CREATE TABLE IF NOT EXISTS ref_api_usage_log (
     error_key TEXT,
     created_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS ref_scheduler_events (
+    event_id TEXT PRIMARY KEY,
+    cycle_id TEXT,
+    cycle_date TEXT,
+    trigger_type TEXT NOT NULL DEFAULT 'scheduled',
+    event_type TEXT NOT NULL DEFAULT 'CYCLE_COMPLETED',
+    scheduled_time TEXT,
+    started_at TEXT NOT NULL,
+    completed_at TEXT,
+    status TEXT NOT NULL,
+    downloaded_count INTEGER NOT NULL DEFAULT 0,
+    failed_count INTEGER NOT NULL DEFAULT 0,
+    free_allowance_remaining INTEGER,
+    assets_selected_json TEXT NOT NULL DEFAULT '[]',
+    errors_json TEXT NOT NULL DEFAULT '[]',
+    next_scheduled_run TEXT,
+    message TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_ref_sched_events_created ON ref_scheduler_events(created_at DESC);
 """
 
 
@@ -284,6 +307,17 @@ class ReferenceDatabase:
     def _init_schema(self) -> None:
         with self.db.connect() as conn:
             conn.executescript(REF_SCHEMA_SQL)
+            cyc_cols = {r["name"] for r in conn.execute("PRAGMA table_info(ref_collection_cycles)").fetchall()}
+            migrations = {
+                "current_stage": "TEXT NOT NULL DEFAULT ''",
+                "stages_json": "TEXT NOT NULL DEFAULT '[]'",
+                "rules_snapshot_json": "TEXT NOT NULL DEFAULT '{}'",
+                "paused": "INTEGER NOT NULL DEFAULT 0",
+                "cancel_requested": "INTEGER NOT NULL DEFAULT 0",
+            }
+            for col, col_def in migrations.items():
+                if col not in cyc_cols:
+                    conn.execute(f"ALTER TABLE ref_collection_cycles ADD COLUMN {col} {col_def}")
 
     # ------------------------------------------------------------------
     # API Usage & Caches
@@ -899,8 +933,10 @@ class ReferenceDatabase:
                     cycle_id, cycle_date, timezone, trigger_type, status, target_count,
                     free_allowance_start, free_allowance_end, credits_start, credits_end,
                     credits_spent, downloaded_count, failed_count, shortage_count,
-                    shortage_reason, log_path, error_message, started_at, completed_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    shortage_reason, log_path, error_message,
+                    current_stage, stages_json, rules_snapshot_json, paused, cancel_requested,
+                    started_at, completed_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     cycle.cycle_id,
@@ -920,6 +956,11 @@ class ReferenceDatabase:
                     cycle.shortage_reason,
                     cycle.log_path,
                     cycle.error_message,
+                    cycle.current_stage,
+                    json.dumps(cycle.stages),
+                    json.dumps(cycle.rules_snapshot),
+                    1 if cycle.paused else 0,
+                    1 if cycle.cancel_requested else 0,
                     cycle.started_at,
                     cycle.completed_at,
                     cycle.updated_at,
@@ -936,6 +977,8 @@ class ReferenceDatabase:
                     credits_start = ?, credits_end = ?, credits_spent = ?,
                     downloaded_count = ?, failed_count = ?, shortage_count = ?,
                     shortage_reason = ?, log_path = ?, error_message = ?,
+                    current_stage = ?, stages_json = ?, rules_snapshot_json = ?,
+                    paused = ?, cancel_requested = ?,
                     completed_at = ?, updated_at = ?
                 WHERE cycle_id = ?
                 """,
@@ -953,16 +996,31 @@ class ReferenceDatabase:
                     cycle.shortage_reason,
                     cycle.log_path,
                     cycle.error_message,
+                    cycle.current_stage,
+                    json.dumps(cycle.stages),
+                    json.dumps(cycle.rules_snapshot),
+                    1 if cycle.paused else 0,
+                    1 if cycle.cancel_requested else 0,
                     cycle.completed_at,
                     cycle.updated_at,
                     cycle.cycle_id,
                 ),
             )
 
+    def _row_to_cycle(self, row: sqlite3.Row) -> CollectionCycleRecord:
+        d = dict(row)
+        stages_raw = d.pop("stages_json", "[]") or "[]"
+        rules_raw = d.pop("rules_snapshot_json", "{}") or "{}"
+        d["stages"] = json.loads(stages_raw)
+        d["rules_snapshot"] = json.loads(rules_raw)
+        d["paused"] = bool(d.get("paused", 0))
+        d["cancel_requested"] = bool(d.get("cancel_requested", 0))
+        return CollectionCycleRecord(**d)
+
     def get_cycle(self, cycle_id: str) -> Optional[CollectionCycleRecord]:
         with self.db.connect() as conn:
             row = conn.execute("SELECT * FROM ref_collection_cycles WHERE cycle_id = ?", (cycle_id,)).fetchone()
-            return CollectionCycleRecord(**dict(row)) if row else None
+            return self._row_to_cycle(row) if row else None
 
     def get_latest_cycle(self, cycle_date: Optional[str] = None) -> Optional[CollectionCycleRecord]:
         with self.db.connect() as conn:
@@ -975,7 +1033,7 @@ class ReferenceDatabase:
                 row = conn.execute(
                     "SELECT * FROM ref_collection_cycles ORDER BY started_at DESC LIMIT 1"
                 ).fetchone()
-            return CollectionCycleRecord(**dict(row)) if row else None
+            return self._row_to_cycle(row) if row else None
 
     def list_cycles(self, limit: int = 30) -> list[CollectionCycleRecord]:
         with self.db.connect() as conn:
@@ -983,14 +1041,90 @@ class ReferenceDatabase:
                 "SELECT * FROM ref_collection_cycles ORDER BY started_at DESC LIMIT ?",
                 (limit,),
             ).fetchall()
-            return [CollectionCycleRecord(**dict(r)) for r in rows]
+            return [self._row_to_cycle(r) for r in rows]
 
     def get_incomplete_cycles(self) -> list[CollectionCycleRecord]:
         with self.db.connect() as conn:
             rows = conn.execute(
-                "SELECT * FROM ref_collection_cycles WHERE status IN ('PENDING', 'RUNNING', 'RETRY_WAIT') ORDER BY started_at ASC"
+                "SELECT * FROM ref_collection_cycles WHERE status IN ('PENDING', 'RUNNING', 'RETRY_WAIT', 'PAUSED') ORDER BY started_at ASC"
             ).fetchall()
-            return [CollectionCycleRecord(**dict(r)) for r in rows]
+            return [self._row_to_cycle(r) for r in rows]
+
+    def record_scheduler_event(self, event: SchedulerNotificationEvent) -> None:
+        with self.db.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO ref_scheduler_events (
+                    event_id, cycle_id, cycle_date, trigger_type, event_type,
+                    scheduled_time, started_at, completed_at, status,
+                    downloaded_count, failed_count, free_allowance_remaining,
+                    assets_selected_json, errors_json, next_scheduled_run,
+                    message, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(event_id) DO UPDATE SET
+                    completed_at = excluded.completed_at,
+                    status = excluded.status,
+                    downloaded_count = excluded.downloaded_count,
+                    failed_count = excluded.failed_count,
+                    free_allowance_remaining = excluded.free_allowance_remaining,
+                    assets_selected_json = excluded.assets_selected_json,
+                    errors_json = excluded.errors_json,
+                    next_scheduled_run = excluded.next_scheduled_run,
+                    message = excluded.message
+                """,
+                (
+                    event.event_id,
+                    event.cycle_id,
+                    event.cycle_date,
+                    event.trigger_type,
+                    event.event_type,
+                    event.scheduled_time,
+                    event.started_at,
+                    event.completed_at,
+                    event.status,
+                    event.downloaded_count,
+                    event.failed_count,
+                    event.free_allowance_remaining,
+                    json.dumps(event.assets_selected, ensure_ascii=False),
+                    json.dumps(event.errors, ensure_ascii=False),
+                    event.next_scheduled_run,
+                    event.message,
+                    event.created_at,
+                ),
+            )
+
+    def _row_to_scheduler_event(self, row: sqlite3.Row) -> SchedulerNotificationEvent:
+        return SchedulerNotificationEvent(
+            event_id=row["event_id"],
+            cycle_id=row["cycle_id"],
+            cycle_date=row["cycle_date"],
+            trigger_type=row["trigger_type"],
+            event_type=row["event_type"],
+            scheduled_time=row["scheduled_time"],
+            started_at=row["started_at"],
+            completed_at=row["completed_at"],
+            status=row["status"],
+            downloaded_count=int(row["downloaded_count"] or 0),
+            failed_count=int(row["failed_count"] or 0),
+            free_allowance_remaining=row["free_allowance_remaining"],
+            assets_selected=json.loads(row["assets_selected_json"] or "[]"),
+            errors=json.loads(row["errors_json"] or "[]"),
+            next_scheduled_run=row["next_scheduled_run"],
+            message=row["message"] or "",
+            created_at=row["created_at"],
+        )
+
+    def list_scheduler_events(self, limit: int = 30) -> list[SchedulerNotificationEvent]:
+        with self.db.connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM ref_scheduler_events ORDER BY created_at DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+            return [self._row_to_scheduler_event(r) for r in rows]
+
+    def get_latest_scheduler_event(self) -> Optional[SchedulerNotificationEvent]:
+        events = self.list_scheduler_events(limit=1)
+        return events[0] if events else None
 
     def enqueue_download_item(self, item: DownloadQueueItem) -> None:
         with self.db.connect() as conn:

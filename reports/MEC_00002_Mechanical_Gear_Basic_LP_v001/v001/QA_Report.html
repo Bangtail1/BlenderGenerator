@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>QA Report — MEC_00002_Mechanical_Gear_Basic_LP_v001</title>
+  <style>
+    body { font-family: "Segoe UI", system-ui, sans-serif; background:#0f1218; color:#e6edf3; margin:0; padding:24px; line-height:1.5; }
+    .wrap { max-width: 1180px; margin: 0 auto; }
+    .card { background:#161b22; border:1px solid #30363d; border-radius:10px; padding:18px 20px; margin-bottom:18px; }
+    .header { display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:16px; }
+    .grade-box { display:flex; align-items:center; gap:14px; }
+    .grade { font-size:28px; font-weight:700; width:56px; height:56px; border-radius:12px; display:flex; align-items:center; justify-content:center; color:#fff; background:#2ea043; }
+    .score-big { font-size:26px; font-weight:700; }
+    .pill { display:inline-block; padding:3px 10px; border-radius:999px; font-size:12px; font-weight:600; }
+    .pill.pass { background:#1b4721; color:#56d364; }
+    .pill.warn { background:#4d3800; color:#e3b341; }
+    .pill.fail { background:#5c1a1b; color:#ff7b72; }
+    .status-pill { background:#388bfd; color:#fff; padding:6px 14px; border-radius:999px; font-weight:600; font-size:13px; }
+    .grid-2 { display:grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap:16px; }
+    table { width:100%; border-collapse:collapse; font-size:14px; }
+    th, td { text-align:left; padding:8px 10px; border-bottom:1px solid #21262d; }
+    th { color:#8b949e; font-weight:600; }
+    .bar-bg { width:140px; height:8px; background:#21262d; border-radius:4px; overflow:hidden; }
+    .bar-fill { height:100%; border-radius:4px; }
+    .preview-grid { display:grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap:12px; }
+    .preview-card { background:#0d1117; border:1px solid #30363d; border-radius:8px; overflow:hidden; }
+    .preview-card.wide { grid-column: span 2; }
+    .preview-card img { width:100%; display:block; }
+    .preview-label { padding:6px 10px; font-size:12px; color:#8b949e; text-align:center; }
+    .muted { color:#8b949e; }
+    .notice { background:#1c2128; border-left:4px solid #388bfd; padding:10px 14px; border-radius:4px; font-size:13px; margin-top:8px; }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <div class="card header">
+    <div>
+      <h1 style="margin:0 0 4px 0;">Mechanical Gear</h1>
+      <div class="muted"><strong>Asset ID:</strong> <code>MEC_00002_Mechanical_Gear_Basic_LP_v001</code> &bull; Version v001 &bull; Dept MEC (medium_prop)</div>
+      <div class="muted" style="font-size:13px;">Tested: 2026-11-18T13:40:55+00:00 &bull; Blender 5.3.0</div>
+    </div>
+    <div class="grade-box">
+      <div class="grade">A</div>
+      <div>
+        <div class="score-big">98.0 / 100</div>
+        <span class="status-pill">REJECTED</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="grid-2">
+    <div class="card">
+      <h2 style="margin-top:0;">Asset &amp; Export Summary</h2>
+      <table>
+        <tr><th>Triangles</th><td>640</td></tr>
+        <tr><th>Polygons / Faces</th><td>352</td></tr>
+        <tr><th>Vertices</th><td>322</td></tr>
+        <tr><th>Mesh Objects</th><td>1</td></tr>
+        <tr><th>Dimensions (m)</th><td>0.184 &times; 0.184 &times; 0.340 m</td></tr>
+        <tr><th>Roblox Studs</th><td>0.66 &times; 0.66 &times; 1.21 studs</td></tr>
+        <tr><th>Materials</th><td>Ceramic_Glaze_Sage</td></tr>
+        <tr><th>Textures</th><td>None</td></tr>
+        <tr><th>UV Status</th><td>WARNING</td></tr>
+        <tr><th>Collision</th><td>PASSED (Rec: Hull)</td></tr>
+        <tr><th>Export Format</th><td>FBX (40,716 bytes)</td></tr>
+      </table>
+    </div>
+
+    <div class="card">
+      <h2 style="margin-top:0;">10-Point Quality Breakdown</h2>
+      <table>
+        <thead><tr><th>Dimension</th><th>Score</th><th>Progress</th><th>Status</th></tr></thead>
+        <tbody><tr><td><strong>Mesh Integrity</strong></td><td>15.00 / 15</td><td><div class='bar-bg'><div class='bar-fill' style='width:100.0%;background:#2ea043'></div></div></td><td><span class="pill pass">PASS</span></td></tr><tr><td><strong>Geometry &amp; Topology</strong></td><td>10.00 / 10</td><td><div class='bar-bg'><div class='bar-fill' style='width:100.0%;background:#2ea043'></div></div></td><td><span class="pill pass">PASS</span></td></tr><tr><td><strong>Polygon Efficiency</strong></td><td>10.00 / 10</td><td><div class='bar-bg'><div class='bar-fill' style='width:100.0%;background:#2ea043'></div></div></td><td><span class="pill pass">PASS</span></td></tr><tr><td><strong>UV Quality</strong></td><td>8.00 / 10</td><td><div class='bar-bg'><div class='bar-fill' style='width:80.0%;background:#d29922'></div></div></td><td><span class="pill warn">WARN</span></td></tr><tr><td><strong>Materials &amp; Textures</strong></td><td>10.00 / 10</td><td><div class='bar-bg'><div class='bar-fill' style='width:100.0%;background:#2ea043'></div></div></td><td><span class="pill pass">PASS</span></td></tr><tr><td><strong>Proportions &amp; Scale</strong></td><td>10.00 / 10</td><td><div class='bar-bg'><div class='bar-fill' style='width:100.0%;background:#2ea043'></div></div></td><td><span class="pill pass">PASS</span></td></tr><tr><td><strong>Roblox Compatibility</strong></td><td>15.00 / 15</td><td><div class='bar-bg'><div class='bar-fill' style='width:100.0%;background:#2ea043'></div></div></td><td><span class="pill pass">PASS</span></td></tr><tr><td><strong>Collision Usability</strong></td><td>5.00 / 5</td><td><div class='bar-bg'><div class='bar-fill' style='width:100.0%;background:#2ea043'></div></div></td><td><span class="pill pass">PASS</span></td></tr><tr><td><strong>Visual Quality (Preview Readiness)</strong></td><td>10.00 / 10</td><td><div class='bar-bg'><div class='bar-fill' style='width:100.0%;background:#2ea043'></div></div></td><td><span class="pill pass">PASS</span></td></tr><tr><td><strong>Organisation &amp; Naming</strong></td><td>5.00 / 5</td><td><div class='bar-bg'><div class='bar-fill' style='width:100.0%;background:#2ea043'></div></div></td><td><span class="pill pass">PASS</span></td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="grid-2">
+    <div class="card">
+      <h2 style="margin-top:0;">Mandatory Failures</h2>
+      <p class='muted'>No mandatory failures.</p>
+      <h3>Warnings</h3>
+      <ul><li>Folded/self-overlapping faces detected inside UV islands (64%); texture artifacts likely.</li></ul>
+    </div>
+    <div class="card">
+      <h2 style="margin-top:0;">Recommendations &amp; Approval Gate</h2>
+      <ul><li>Re-unwrap folded UV islands cleanly with Smart UV Project or marked seams.</li><li>Complete the Roblox Studio Manual Import Verification Checklist (Studio CLI import is not available in this environment).</li><li>Human visual inspection required on generated preview renders before final approval.</li></ul>
+      <div class="notice"><strong>Human Approval Gate:</strong> Automated preview rendering &amp; pixel sanity verified; human visual inspection is required before final approval. (AI Visual Inspection Performed: False)</div>
+      <div class="notice"><strong>Roblox Studio Notice:</strong> Direct Roblox Studio import automation is not available in this headless environment; complete the manual Roblox Studio import checklist before publishing.</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2 style="margin-top:0;">Roblox Studio Manual Import Verification (Status: PENDING)</h2>
+    <p class="muted" style="margin-top:0;">PENDING — Not yet verified inside Roblox Studio. Automated Blender checks cannot substitute for manual Studio import, orientation, scale, material, and collision testing.</p>
+    <table>
+      <thead><tr><th>#</th><th>Check</th><th>Expected Result</th><th>Mode</th></tr></thead>
+      <tbody><tr><td>1</td><td>Import Asset via Roblox Studio Asset Manager / Mesh Importer</td><td>Import MEC_00002_Mechanical_Gear_Basic_LP_v001.fbx without &#x27;Mesh exceeds 20,000 triangles&#x27; or format errors.</td><td>Manual Studio Check</td></tr><tr><td>2</td><td>Verify Orientation &amp; Scale in Studs</td><td>Front face points -Z, upright +Y in Studio, and character proportion matches R15 reference dummy.</td><td>Manual Studio Check</td></tr><tr><td>3</td><td>Inspect SurfaceAppearance / Material Rendering</td><td>Materials, roughness, and textures render cleanly under Studio Future/ShadowMap lighting.</td><td>Manual Studio Check</td></tr><tr><td>4</td><td>Test CollisionFidelity in Playtest</td><td>Verify CollisionFidelity (Box/Hull/Precise) matches gameplay walkthrough and physics behavior.</td><td>Manual Studio Check</td></tr></tbody>
+    </table>
+  </div>
+
+  <div class="card">
+    <h2 style="margin-top:0;">Visual Inspection Previews</h2>
+    <div class="preview-grid">
+      <div class='preview-card wide'><img src='previews/contact_sheet.png' alt='Contact Sheet' /><div class='preview-label'>CONTACT SHEET</div></div><div class='preview-card'><img src='previews/three_quarter.png' alt='three_quarter' /><div class='preview-label'>THREE QUARTER</div></div><div class='preview-card'><img src='previews/front.png' alt='front' /><div class='preview-label'>FRONT</div></div><div class='preview-card'><img src='previews/right.png' alt='right' /><div class='preview-label'>RIGHT</div></div><div class='preview-card'><img src='previews/back.png' alt='back' /><div class='preview-label'>BACK</div></div><div class='preview-card'><img src='previews/left.png' alt='left' /><div class='preview-label'>LEFT</div></div><div class='preview-card'><img src='previews/top.png' alt='top' /><div class='preview-label'>TOP</div></div><div class='preview-card'><img src='previews/closeup.png' alt='closeup' /><div class='preview-label'>CLOSEUP</div></div><div class='preview-card'><img src='previews/wireframe.png' alt='wireframe' /><div class='preview-label'>WIREFRAME</div></div><div class='preview-card'><img src='previews/material_beauty.png' alt='material_beauty' /><div class='preview-label'>MATERIAL BEAUTY</div></div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

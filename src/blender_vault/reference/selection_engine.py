@@ -15,6 +15,7 @@ from .models import (
     PRIMARY_CATEGORIES,
     BlendSwapAssetSummary,
     BlendSwapFileInfo,
+    CollectionRulesConfig,
     SelectionCandidate,
 )
 from .ref_db import ReferenceDatabase
@@ -114,6 +115,7 @@ class SelectionEngine:
         target_count: int = 7,
         max_pages: int = 4,
         per_page: int = 50,
+        rules: Optional[CollectionRulesConfig] = None,
     ) -> SelectionResult:
         if target_count <= 0:
             return SelectionResult([], 0, {}, 0, "Target count is 0.")
@@ -140,19 +142,32 @@ class SelectionEngine:
                 if item.id not in seen_ids:
                     seen_ids.add(item.id)
                     raw_candidates.append(item)
-                    if self._is_discovery_eligible_uncollected(item):
+                    if self._is_discovery_eligible_uncollected(item, rules=rules):
                         eligible_uncollected_count += 1
             total_pages = int(pagination.get("pages") or 1)
             if page >= total_pages or eligible_uncollected_count >= target_count * 12:
                 break
 
         cat_counts = self.ref_db.get_category_distribution()
-        return self.select_from_candidates(raw_candidates, target_count=target_count, category_distribution=cat_counts)
+        return self.select_from_candidates(
+            raw_candidates,
+            target_count=target_count,
+            category_distribution=cat_counts,
+            rules=rules,
+        )
 
-    def _prefilter_candidate(self, summary: BlendSwapAssetSummary) -> tuple[Optional[str], Optional[Any]]:
+    def _prefilter_candidate(
+        self,
+        summary: BlendSwapAssetSummary,
+        *,
+        rules: Optional[CollectionRulesConfig] = None,
+    ) -> tuple[Optional[str], Optional[Any]]:
         """Run fast local checks (zero API calls); returns (rejection_reason, license_assessment)."""
         if self.ref_db.has_downloaded_asset(summary.id):
             return "already_collected", None
+
+        if rules and summary.id in set(rules.excluded_candidate_ids or []):
+            return "excluded_by_rule", None
 
         existing = self.ref_db.get_reference_asset(summary.id)
         if existing and existing.status.value == "FAILED":
@@ -160,22 +175,53 @@ class SelectionEngine:
 
         if summary.asset_type != "model_3d":
             return "non_3d_model_type", None
+        title_lower = summary.title.lower()
+        desc_lower = (summary.description or "").lower()
+        tag_lower = {t.strip().lower() for t in summary.tags}
+        if (
+            "brushes" in title_lower
+            or "brush pack" in title_lower
+            or "addon" in title_lower
+            or "add-on" in title_lower
+            or "brushes" in tag_lower
+            or "preview scene is not included" in desc_lower
+        ):
+            return "non_model_brush_or_addon", None
         if not summary.title.strip() or (not summary.description.strip() and not summary.tags):
             return "insufficient_metadata", None
+
+        if rules and rules.min_downloads > 0 and summary.counts.downloads < rules.min_downloads:
+            return "below_min_downloads", None
 
         lic = assess_license(summary.license, license_source_override=summary.license_source)
         if lic.license_key == "commercial" or not lic.suitable_for_benchmarking:
             return "commercial_or_unsuitable_license", lic
+        if rules and rules.preferred_licenses:
+            pref_lics = {k.strip().lower().replace("-", "_") for k in rules.preferred_licenses if k.strip()}
+            if pref_lics and lic.license_key.lower() not in pref_lics:
+                return "license_policy_filtered", lic
         if self.settings.reference_license_policy == "permissive_only" and lic.license_key not in {"cc0", "cc_by"}:
             return "license_policy_filtered", lic
         if self.settings.reference_license_policy == "cc_only" and not lic.license_key.startswith("cc"):
             return "license_policy_filtered", lic
 
+        if rules and rules.excluded_categories:
+            excl = {c.strip().lower() for c in rules.excluded_categories if c.strip()}
+            pcat = classify_primary_category(summary, ref_db=None, allow_auto_extend=False).lower()
+            raw_cat = (summary.category.name or "").strip().lower()
+            if pcat in excl or (raw_cat and raw_cat in excl):
+                return "excluded_category", lic
+
         return None, lic
 
-    def _is_discovery_eligible_uncollected(self, summary: BlendSwapAssetSummary) -> bool:
+    def _is_discovery_eligible_uncollected(
+        self,
+        summary: BlendSwapAssetSummary,
+        *,
+        rules: Optional[CollectionRulesConfig] = None,
+    ) -> bool:
         """Fast local check (zero API calls) for whether a candidate counts toward discovery target."""
-        rejection, _ = self._prefilter_candidate(summary)
+        rejection, _ = self._prefilter_candidate(summary, rules=rules)
         return rejection is None
 
     def select_from_candidates(
@@ -184,6 +230,7 @@ class SelectionEngine:
         *,
         target_count: int = 7,
         category_distribution: Optional[dict[str, int]] = None,
+        rules: Optional[CollectionRulesConfig] = None,
     ) -> SelectionResult:
         cat_dist = dict(category_distribution if category_distribution is not None else self.ref_db.get_category_distribution())
         filtered_reasons: dict[str, int] = {}
@@ -196,7 +243,7 @@ class SelectionEngine:
 
         for summary in candidates:
             # 1-3. Duplicate, past-failure, asset-type, metadata, and license checks
-            rejection, lic = self._prefilter_candidate(summary)
+            rejection, lic = self._prefilter_candidate(summary, rules=rules)
             if rejection is not None or lic is None:
                 reject(rejection or "filtered")
                 continue
@@ -262,10 +309,35 @@ class SelectionEngine:
             if best_file.render_engine in {"cycles", "eevee"}:
                 eval_potential += 2.0
 
+            # Rule alignment bonus when CollectionRulesConfig is provided
+            rule_bonus = 0.0
+            if rules:
+                pref_cats = {c.strip().lower() for c in rules.preferred_categories if c.strip()}
+                if pref_cats and (primary_cat.lower() in pref_cats or (summary.category.name or "").strip().lower() in pref_cats):
+                    rule_bonus += 10.0
+                pref_styles = {s.strip().lower() for s in rules.preferred_modeling_styles if s.strip()}
+                if pref_styles and any(t.lower() in pref_styles for t in tech_tags):
+                    rule_bonus += 5.0
+                if rules.preferred_poly_complexity and rules.preferred_poly_complexity != "any":
+                    if rules.preferred_poly_complexity.replace("_", "-").lower() in {t.lower() for t in tech_tags}:
+                        rule_bonus += 4.0
+                if rules.preferred_file_format and rules.preferred_file_format != "any":
+                    pfmt = rules.preferred_file_format.lower()
+                    if pfmt in best_file.format.lower() or best_file.filename.lower().endswith(f".{pfmt}"):
+                        rule_bonus += 4.0
+
             # Popularity normalized into 28 points weight
             pop_weighted = round((pop_score / 100.0) * 28.0, 2)
             total_score = round(
-                pop_weighted + fmt_score + ver_score + size_score + meta_score + lic_bonus + underrep_score + eval_potential,
+                pop_weighted
+                + fmt_score
+                + ver_score
+                + size_score
+                + meta_score
+                + lic_bonus
+                + underrep_score
+                + eval_potential
+                + rule_bonus,
                 2,
             )
 
@@ -289,6 +361,7 @@ class SelectionEngine:
                         "license_bonus": lic_bonus,
                         "category_underrep": underrep_score,
                         "eval_potential": eval_potential,
+                        "rule_bonus": rule_bonus,
                     },
                     mapped_primary_category=primary_cat,
                     modeling_style_hint=style_hint,
@@ -304,7 +377,12 @@ class SelectionEngine:
                 shortage_reason=f"No eligible candidates found among {len(candidates)} assets ({filtered_reasons}).",
             )
 
-        selected = self._allocate_diverse_slots(scored, target_count=target_count, category_distribution=cat_dist)
+        selected = self._allocate_diverse_slots(
+            scored,
+            target_count=target_count,
+            category_distribution=cat_dist,
+            rules=rules,
+        )
         shortage = max(0, target_count - len(selected))
         shortage_reason = (
             f"Only {len(selected)}/{target_count} eligible diverse assets found after filtering ({filtered_reasons})."
@@ -325,25 +403,32 @@ class SelectionEngine:
         *,
         target_count: int,
         category_distribution: dict[str, int],
+        rules: Optional[CollectionRulesConfig] = None,
     ) -> list[SelectionCandidate]:
         """Select up to target_count diverse candidates across strategic benchmark slots."""
         remaining = sorted(pool, key=lambda c: c.selection_score, reverse=True)
         chosen: list[SelectionCandidate] = []
         chosen_ids: set[int] = set()
         used_cats: set[str] = set()
+        cat_counts_cycle: dict[str, int] = {}
         used_styles: set[str] = set()
+        diversity_enabled = True if rules is None else bool(rules.diversity_enabled)
+        max_per_cat = 20 if rules is None else max(1, int(rules.max_per_category_per_cycle))
 
         def pick(slot_num: int, reason: str, key_fn) -> bool:
             nonlocal remaining
             avail = [c for c in remaining if c.asset.id not in chosen_ids]
             if not avail:
                 return False
-            best = max(avail, key=key_fn)
+            capped = [c for c in avail if cat_counts_cycle.get(c.mapped_primary_category, 0) < max_per_cat]
+            candidates_pool = capped if (diversity_enabled and capped) else avail
+            best = max(candidates_pool, key=key_fn) if diversity_enabled else avail[0]
             best.slot_number = slot_num
             best.slot_reason = reason
             chosen.append(best)
             chosen_ids.add(best.asset.id)
             used_cats.add(best.mapped_primary_category)
+            cat_counts_cycle[best.mapped_primary_category] = cat_counts_cycle.get(best.mapped_primary_category, 0) + 1
             used_styles.add(best.modeling_style_hint)
             return True
 

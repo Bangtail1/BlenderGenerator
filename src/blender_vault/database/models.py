@@ -60,6 +60,13 @@ class ValidationStatus(str, Enum):
     NOT_REQUIRED = "NOT_REQUIRED"
 
 
+class StudioVerificationStatus(str, Enum):
+    PENDING = "PENDING"
+    PASSED = "PASSED"
+    PASSED_WITH_WARNINGS = "PASSED_WITH_WARNINGS"
+    FAILED = "FAILED"
+
+
 class QAGrade(str, Enum):
     A = "A"
     B = "B"
@@ -136,7 +143,6 @@ ALLOWED_STATUS_TRANSITIONS: dict[ProductionStatus, frozenset[ProductionStatus]] 
         ProductionStatus.PUBLISHED,
         ProductionStatus.ARCHIVED,
         ProductionStatus.MODELLING,
-        ProductionStatus.QA_PENDING,
     }),
     ProductionStatus.REJECTED: frozenset({
         ProductionStatus.MODELLING,
@@ -148,7 +154,6 @@ ALLOWED_STATUS_TRANSITIONS: dict[ProductionStatus, frozenset[ProductionStatus]] 
     ProductionStatus.PUBLISHED: frozenset({
         ProductionStatus.ARCHIVED,
         ProductionStatus.MODELLING,
-        ProductionStatus.QA_PENDING,
     }),
     ProductionStatus.ARCHIVED: frozenset({
         ProductionStatus.PLANNED,
@@ -294,7 +299,26 @@ class AssetVersionRecord(BaseModel):
     is_approved: bool = False
     approved_by: Optional[str] = None
     approved_at: Optional[str] = None
+    studio_verification_status: str = StudioVerificationStatus.PENDING.value
     sha256: Optional[str] = None
+
+
+class StudioVerificationRecord(BaseModel):
+    verification_id: int
+    asset_id: str
+    version_id: int
+    version_number: Optional[int] = None
+    status: StudioVerificationStatus = StudioVerificationStatus.PENDING
+    fbx_import_ok: bool = False
+    orientation_ok: bool = False
+    scale_ok: bool = False
+    material_appearance_ok: bool = False
+    collision_test_ok: bool = False
+    studio_warnings: list[str] = Field(default_factory=list)
+    studio_errors: list[str] = Field(default_factory=list)
+    notes: str = ""
+    verified_by: str = ""
+    verified_at: str = Field(default_factory=utc_now_iso)
 
 
 class QAReportRecord(BaseModel):

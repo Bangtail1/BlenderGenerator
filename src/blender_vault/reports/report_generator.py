@@ -37,6 +37,7 @@ class QAReportGenerator:
         approved_at: Optional[str] = None,
         google_drive_file_id: Optional[str] = None,
         google_drive_url: Optional[str] = None,
+        studio_verification: Optional[dict[str, Any]] = None,
     ) -> dict[str, Path]:
         out_dir = self.report_dir_for(qa_output.asset_id, qa_output.asset_version)
         previews_out = out_dir / "previews"
@@ -64,6 +65,12 @@ class QAReportGenerator:
         approval_state = final_approval_status or (
             "AWAITING_HUMAN_APPROVAL" if qa_output.final_status == "QA_PASSED" else "QA_FAILED"
         )
+
+        sv_status_raw = studio_verification.get("status", "PENDING") if studio_verification else "PENDING"
+        sv_status = sv_status_raw.value if hasattr(sv_status_raw, "value") else str(sv_status_raw)
+        studio_norm = dict(studio_verification) if studio_verification else None
+        if studio_norm is not None:
+            studio_norm["status"] = sv_status
 
         json_payload: dict[str, Any] = {
             "asset_id": qa_output.asset_id,
@@ -103,6 +110,8 @@ class QAReportGenerator:
             "visual_inspection_note": qa_output.visual_inspection_note,
             "roblox_studio_automation_available": qa_output.roblox_studio_automation_available,
             "roblox_studio_limitation_note": qa_output.roblox_studio_limitation_note,
+            "roblox_studio_verification_status": sv_status,
+            "roblox_studio_verification": studio_norm,
             "roblox_studio_checklist": [c.model_dump() for c in qa_output.roblox_studio_checklist],
             "preview_images": rel_previews,
             "contact_sheet": rel_contact_sheet,
@@ -274,7 +283,8 @@ class QAReportGenerator:
   </div>
 
   <div class="card">
-    <h2 style="margin-top:0;">Roblox Studio Manual Import Checklist</h2>
+    <h2 style="margin-top:0;">Roblox Studio Manual Import Verification (Status: {_e(data.get('roblox_studio_verification_status', 'PENDING'))})</h2>
+    <p class="muted" style="margin-top:0;">{self._render_studio_verification_summary(data.get('roblox_studio_verification'))}</p>
     <table>
       <thead><tr><th>#</th><th>Check</th><th>Expected Result</th><th>Mode</th></tr></thead>
       <tbody>{checklist_rows}</tbody>
@@ -291,6 +301,29 @@ class QAReportGenerator:
 </body>
 </html>
 """
+
+    @staticmethod
+    def _render_studio_verification_summary(studio: Optional[dict[str, Any]]) -> str:
+        if not studio:
+            return (
+                "PENDING — Not yet verified inside Roblox Studio. "
+                "Automated Blender checks cannot substitute for manual Studio import, orientation, scale, material, and collision testing."
+            )
+        checks = [
+            f"FBX Import: {'PASS' if studio.get('fbx_import_ok') else 'FAIL'}",
+            f"Orientation: {'PASS' if studio.get('orientation_ok') else 'FAIL'}",
+            f"Scale: {'PASS' if studio.get('scale_ok') else 'FAIL'}",
+            f"Materials: {'PASS' if studio.get('material_appearance_ok') else 'FAIL'}",
+            f"Collision: {'PASS' if studio.get('collision_test_ok') else 'FAIL'}",
+        ]
+        warn_txt = f" | Warnings: {'; '.join(studio.get('studio_warnings', []))}" if studio.get("studio_warnings") else ""
+        err_txt = f" | Errors: {'; '.join(studio.get('studio_errors', []))}" if studio.get("studio_errors") else ""
+        return _e(
+            f"{studio.get('status')} verified by {studio.get('verified_by')} at {studio.get('verified_at')} — "
+            + ", ".join(checks)
+            + warn_txt
+            + err_txt
+        )
 
     @staticmethod
     def _atomic_write(target: Path, text: str) -> None:

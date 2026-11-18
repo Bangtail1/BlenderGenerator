@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Optional
 
 from .models import (
@@ -31,6 +32,7 @@ _CATEGORY_SYNONYMS: dict[str, str] = {
     "people": "Characters",
     "vehicles": "Vehicles",
     "vehicle": "Vehicles",
+    "airplane": "Vehicles",
     "car": "Vehicles",
     "cars": "Vehicles",
     "aircraft": "Vehicles",
@@ -65,12 +67,17 @@ _CATEGORY_SYNONYMS: dict[str, str] = {
     "gun": "Weapons",
     "props": "Props and objects",
     "prop": "Props and objects",
+    "props_objects": "Props and objects",
+    "props_&_objects": "Props and objects",
     "props_and_objects": "Props and objects",
+    "game_engine": "Props and objects",
     "household": "Props and objects",
     "objects": "Props and objects",
     "environments": "Environments",
     "environment": "Environments",
     "landscape": "Environments",
+    "landscapes": "Environments",
+    "scenes": "Environments",
     "terrain": "Environments",
     "scenery": "Environments",
     "mechanical": "Mechanical components",
@@ -80,13 +87,13 @@ _CATEGORY_SYNONYMS: dict[str, str] = {
     "hardware": "Mechanical components",
 }
 
-_GENERIC_CATEGORY_NAMES = frozenset({"", "other", "misc", "miscellaneous", "uncategorized"})
+_GENERIC_CATEGORY_NAMES = frozenset({"", "other", "misc", "miscellaneous", "uncategorized", "blender_2.4x", "blender_2_4x"})
 
 _KEYWORD_TO_PRIMARY: list[tuple[tuple[str, ...], str]] = [
+    (("car", "truck", "bike", "motorcycle", "plane", "airplane", "helicopter", "ship", "boat", "train", "spaceship", "starship", "cruiser", "enterprise", "delorean"), "Vehicles"),
     (("chair", "stool", "sofa", "couch", "table", "desk", "bed", "cabinet", "bookshelf", "bench"), "Furniture"),
-    (("character", "humanoid", "mannequin", "knight", "warrior", "avatar", "head", "bust"), "Characters"),
-    (("animal", "dog", "cat", "fox", "bird", "horse", "dragon", "fish", "insect", "wolf"), "Animals"),
-    (("car", "truck", "bike", "motorcycle", "plane", "helicopter", "ship", "boat", "train", "spaceship"), "Vehicles"),
+    (("character", "humanoid", "mannequin", "knight", "warrior", "avatar", "head", "bust", "figure", "bodykun", "bodychan"), "Characters"),
+    (("animal", "dog", "cat", "fox", "bird", "horse", "dragon", "fish", "insect", "wolf", "deer"), "Animals"),
     (("house", "building", "arch", "pillar", "wall", "door", "window", "stairs", "cathedral", "bridge"), "Architecture"),
     (("phone", "laptop", "monitor", "camera", "speaker", "keyboard", "console", "tv", "radio", "electronic"), "Electronics"),
     (("apple", "bread", "cake", "pizza", "burger", "fruit", "vegetable", "food", "cupcake", "cheese"), "Food"),
@@ -97,6 +104,10 @@ _KEYWORD_TO_PRIMARY: list[tuple[tuple[str, ...], str]] = [
     (("terrain", "landscape", "forest", "island", "cave", "valley", "planet", "environment", "mountain"), "Environments"),
     (("barrel", "crate", "lamp", "vase", "bottle", "mug", "chest", "prop", "lantern", "book"), "Props and objects"),
 ]
+
+
+def _match_keywords(text: str, keywords: tuple[str, ...]) -> bool:
+    return any(re.search(rf"(?<![a-z]){re.escape(kw)}(?![a-z])", text) for kw in keywords)
 
 
 def classify_primary_category(
@@ -115,10 +126,15 @@ def classify_primary_category(
         if candidate in _CATEGORY_SYNONYMS:
             return _CATEGORY_SYNONYMS[candidate]
 
-    # Check text/tags heuristics before creating a new category
-    haystack = f"{summary.title} {summary.description} {' '.join(summary.tags)}".lower()
+    # Check title + tags before full description so subject title keywords dominate
+    primary_text = f"{summary.title} {' '.join(summary.tags)}".lower()
     for keywords, target in _KEYWORD_TO_PRIMARY:
-        if any(kw in haystack for kw in keywords):
+        if _match_keywords(primary_text, keywords):
+            return target
+
+    desc_text = (summary.description or "").lower()
+    for keywords, target in _KEYWORD_TO_PRIMARY:
+        if _match_keywords(desc_text, keywords):
             return target
 
     # Preserve unrecognized genuine BlendSwap subject category if non-empty & auto-extend allowed

@@ -44,6 +44,11 @@ class VersionRepository:
             is_approved=bool(row["is_approved"]),
             approved_by=row["approved_by"],
             approved_at=row["approved_at"],
+            studio_verification_status=(
+                row["studio_verification_status"]
+                if "studio_verification_status" in row.keys() and row["studio_verification_status"]
+                else "PENDING"
+            ),
             sha256=row["sha256"],
         )
 

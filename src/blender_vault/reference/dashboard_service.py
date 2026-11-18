@@ -11,6 +11,7 @@ from .blendswap_client import BlendSwapClient
 from .models import ReferenceAssetRecord, ReferenceAssetStatus
 from .ref_db import ReferenceDatabase
 from .scheduler import DailyCollectionScheduler, resolve_timezone
+from .windows_task_scheduler import WindowsTaskSchedulerManager
 
 
 class ReferenceDashboardService:
@@ -22,11 +23,13 @@ class ReferenceDashboardService:
         ref_db: ReferenceDatabase,
         client: BlendSwapClient,
         scheduler: DailyCollectionScheduler,
+        win_task_scheduler: Optional[WindowsTaskSchedulerManager] = None,
     ) -> None:
         self.settings = settings
         self.ref_db = ref_db
         self.client = client
         self.scheduler = scheduler
+        self.win_task_scheduler = win_task_scheduler or WindowsTaskSchedulerManager(settings)
 
     def build_dashboard_summary(self, *, check_live_api: bool = True) -> dict[str, Any]:
         assets = self.ref_db.list_reference_assets(include_details=True)
@@ -50,6 +53,9 @@ class ReferenceDashboardService:
         )
         acct = api_status.get("account") or {}
 
+        notifications = self.ref_db.list_scheduler_events(limit=20)
+        win_task_status = self.win_task_scheduler.query_task_status() if self.win_task_scheduler else None
+
         # Section A: Collection Overview
         section_a = {
             "today_date": today_str,
@@ -66,6 +72,9 @@ class ReferenceDashboardService:
             "api_usage": api_usage,
             "latest_cycle": latest_cycle.model_dump() if latest_cycle else None,
             "recent_cycles": [c.model_dump() for c in cycles[:10]],
+            "latest_notification": notifications[0].model_dump() if notifications else None,
+            "notifications": [n.model_dump() for n in notifications],
+            "windows_task_scheduler": win_task_status,
             "total_successful_downloads": sum(1 for h in dl_history if h.get("success")),
             "total_failed_downloads": sum(1 for h in dl_history if not h.get("success")),
         }

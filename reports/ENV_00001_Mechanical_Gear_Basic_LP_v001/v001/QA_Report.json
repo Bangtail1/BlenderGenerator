@@ -1,0 +1,687 @@
+{
+  "asset_id": "ENV_00001_Mechanical_Gear_Basic_LP_v001",
+  "asset_name": "Mechanical Gear",
+  "asset_version": 1,
+  "department_code": "ENV",
+  "budget_tier": "large_prop",
+  "test_timestamp": "2026-11-18T13:41:14+00:00",
+  "blender_version": "5.3.0",
+  "polygon_count": 96,
+  "triangle_count": 192,
+  "vertex_count": 117,
+  "object_count": 1,
+  "dimensions": {
+    "meters": [
+      0.20298,
+      0.35,
+      0.044
+    ],
+    "roblox_studs": [
+      0.725,
+      1.25,
+      0.157
+    ]
+  },
+  "texture_information": {
+    "resolution": "None",
+    "image_texture_count": 0,
+    "image_dimensions": [],
+    "missing_textures": [],
+    "has_base_color_map": false,
+    "has_normal_map": false,
+    "has_roughness_map": false,
+    "has_metallic_map": false
+  },
+  "material_information": {
+    "material_count": 1,
+    "procedural_material_count": 0,
+    "materials": [
+      "Botanical_Leaf_Green"
+    ],
+    "material_details": [
+      {
+        "name": "Botanical_Leaf_Green",
+        "has_principled_bsdf": true,
+        "is_procedural": false,
+        "image_textures": []
+      }
+    ],
+    "unsupported_configs": []
+  },
+  "export_validation": {
+    "export_format": "FBX",
+    "export_path": "C:\\Users\\azlan\\Documents\\Antigravity_Project\\BlenderGenerator\\vault_storage\\assets\\e40ca4cad412\\v1\\mechanical_gear.fbx",
+    "file_size_bytes": 24396,
+    "roundtrip": {
+      "attempted": true,
+      "success": true,
+      "before": {
+        "mesh_count": 1,
+        "object_names": [
+          "Botanical_Leaf_Blade"
+        ],
+        "vertex_count": 117,
+        "face_count": 96,
+        "tri_count": 192,
+        "dimensions": [
+          0.20298,
+          0.35,
+          0.044
+        ],
+        "material_count": 1,
+        "materials": [
+          "Botanical_Leaf_Green"
+        ],
+        "has_uv_all": true
+      },
+      "after": {
+        "mesh_count": 1,
+        "object_names": [
+          "Botanical_Leaf_Blade"
+        ],
+        "vertex_count": 117,
+        "face_count": 96,
+        "tri_count": 192,
+        "dimensions": [
+          0.20298,
+          0.35,
+          0.044
+        ],
+        "material_count": 1,
+        "materials": [
+          "Botanical_Leaf_Green"
+        ],
+        "has_uv_all": true
+      },
+      "dimension_delta_max": 0.0,
+      "tri_delta": 0,
+      "materials_preserved": true,
+      "uvs_preserved": true
+    }
+  },
+  "collision_assessment": {
+    "requires_collision": false,
+    "has_dedicated_collision": false,
+    "collision_mesh_count": 0,
+    "collision_tri_count": 0,
+    "recommended_fidelity": "Hull",
+    "collision_status": "PASSED",
+    "notes": [
+      "Geometry suitable for Roblox 'Hull' CollisionFidelity."
+    ]
+  },
+  "uv_status": "PASSED",
+  "individual_qa_scores": {
+    "mesh_integrity": 15.0,
+    "geometry_topology": 10.0,
+    "polygon_efficiency": 8.5,
+    "uv_quality": 10.0,
+    "materials_textures": 10.0,
+    "proportions_scale": 7.5,
+    "roblox_compatibility": 15.0,
+    "collision_usability": 5.0,
+    "visual_quality": 10.0,
+    "organisation_naming": 5.0
+  },
+  "dimensions_breakdown": [
+    {
+      "key": "mesh_integrity",
+      "label": "Mesh Integrity",
+      "score": 15.0,
+      "max_score": 15.0,
+      "findings": [
+        {
+          "check_id": "empty_or_missing_refs",
+          "dimension": "mesh_integrity",
+          "name": "Empty Meshes & Missing References",
+          "status": "PASS",
+          "mandatory": false,
+          "measured": 0,
+          "threshold": 0,
+          "message": "All 1 mesh object(s) contain valid geometry with zero missing references.",
+          "recommendation": null
+        },
+        {
+          "check_id": "zero_area_faces",
+          "dimension": "mesh_integrity",
+          "name": "Degenerate & Zero-Area Faces",
+          "status": "PASS",
+          "mandatory": false,
+          "measured": 0,
+          "threshold": 0,
+          "message": "Zero degenerate or zero-area faces.",
+          "recommendation": null
+        },
+        {
+          "check_id": "duplicate_geometry",
+          "dimension": "mesh_integrity",
+          "name": "Duplicate Vertices & Faces",
+          "status": "PASS",
+          "mandatory": false,
+          "measured": 0,
+          "threshold": 0,
+          "message": "No duplicate vertices or duplicate faces.",
+          "recommendation": null
+        },
+        {
+          "check_id": "non_manifold_edges",
+          "dimension": "mesh_integrity",
+          "name": "Manifold Integrity",
+          "status": "PASS",
+          "mandatory": false,
+          "measured": {
+            "multi_face_edges": 0,
+            "boundary_edges": 40
+          },
+          "threshold": 0,
+          "message": "Clean manifold topology.",
+          "recommendation": null
+        },
+        {
+          "check_id": "normals_integrity",
+          "dimension": "mesh_integrity",
+          "name": "Face Normals Integrity",
+          "status": "PASS",
+          "mandatory": false,
+          "measured": 0,
+          "threshold": 0,
+          "message": "All face normals valid and consistently outward-facing.",
+          "recommendation": null
+        },
+        {
+          "check_id": "loose_and_disconnected",
+          "dimension": "mesh_integrity",
+          "name": "Loose Geometry & Stray Islands",
+          "status": "PASS",
+          "mandatory": false,
+          "measured": {
+            "mesh_objects": 1,
+            "total_parts": 1
+          },
+          "threshold": "No loose verts/edges",
+          "message": "No loose vertices/edges; 1 mesh object(s) / 1 intentional component(s).",
+          "recommendation": null
+        }
+      ],
+      "failures": [],
+      "warnings": [],
+      "recommendations": []
+    },
+    {
+      "key": "geometry_topology",
+      "label": "Geometry & Topology",
+      "score": 10.0,
+      "max_score": 10.0,
+      "findings": [
+        {
+          "check_id": "applied_transforms",
+          "dimension": "geometry_topology",
+          "name": "Applied Object Transforms",
+          "status": "PASS",
+          "mandatory": false,
+          "measured": {
+            "scale": [
+              1,
+              1,
+              1
+            ],
+            "rotation": [
+              0,
+              0,
+              0
+            ]
+          },
+          "threshold": "Applied",
+          "message": "All mesh objects have clean applied transforms.",
+          "recommendation": null
+        },
+        {
+          "check_id": "per_part_tri_limit",
+          "dimension": "geometry_topology",
+          "name": "Per-MeshPart Triangle Limit",
+          "status": "PASS",
+          "mandatory": false,
+          "measured": 192,
+          "threshold": "<= 20,000",
+          "message": "All 1 mesh object(s) fit within Roblox's 20,000-triangle per-part limit.",
+          "recommendation": null
+        },
+        {
+          "check_id": "topology_ngons",
+          "dimension": "geometry_topology",
+          "name": "Polygon & Edge Topology",
+          "status": "PASS",
+          "mandatory": false,
+          "measured": {
+            "verts": 117,
+            "edges": 212,
+            "faces": 96,
+            "tris": 192,
+            "ngon_ratio": 0.0
+          },
+          "threshold": "ngon_ratio <= 0.15",
+          "message": "Clean quad/tri topology (117 verts, 212 edges, 96 polys, 192 tris).",
+          "recommendation": null
+        }
+      ],
+      "failures": [],
+      "warnings": [],
+      "recommendations": []
+    },
+    {
+      "key": "polygon_efficiency",
+      "label": "Polygon Efficiency",
+      "score": 8.5,
+      "max_score": 10.0,
+      "findings": [
+        {
+          "check_id": "polygon_budget",
+          "dimension": "polygon_efficiency",
+          "name": "Category Polygon Budget",
+          "status": "PASS",
+          "mandatory": false,
+          "measured": 192,
+          "threshold": "1,000\u20138,000",
+          "message": "Low triangle count (192 tris < 1,000 optimal lower range for ENV/large_prop); very lightweight.",
+          "recommendation": null
+        }
+      ],
+      "failures": [],
+      "warnings": [],
+      "recommendations": []
+    },
+    {
+      "key": "uv_quality",
+      "label": "UV Quality",
+      "score": 10.0,
+      "max_score": 10.0,
+      "findings": [
+        {
+          "check_id": "uv_valid_coords",
+          "dimension": "uv_quality",
+          "name": "UV Coordinate Validity",
+          "status": "PASS",
+          "mandatory": false,
+          "measured": 0,
+          "threshold": 0,
+          "message": "All UV coordinates are finite numbers.",
+          "recommendation": null
+        },
+        {
+          "check_id": "uv_presence",
+          "dimension": "uv_quality",
+          "name": "UV Map Presence",
+          "status": "PASS",
+          "mandatory": false,
+          "measured": "1/1 meshes",
+          "threshold": "All meshes",
+          "message": "All visible mesh objects contain active UV layers.",
+          "recommendation": null
+        },
+        {
+          "check_id": "uv_overlap",
+          "dimension": "uv_quality",
+          "name": "UV Island Overlap & Layout",
+          "status": "PASS",
+          "mandatory": false,
+          "measured": {
+            "overlap": 0.0,
+            "modes": [
+              "UNIQUE_PACKED"
+            ]
+          },
+          "threshold": "<= 0.20",
+          "message": "Clean UV layout (0.0% overlap, mode=UNIQUE_PACKED); suitable for unique PBR baking.",
+          "recommendation": null
+        }
+      ],
+      "failures": [],
+      "warnings": [],
+      "recommendations": []
+    },
+    {
+      "key": "materials_textures",
+      "label": "Materials & Textures",
+      "score": 10.0,
+      "max_score": 10.0,
+      "findings": [
+        {
+          "check_id": "material_presence",
+          "dimension": "materials_textures",
+          "name": "Material Assignment",
+          "status": "PASS",
+          "mandatory": false,
+          "measured": {
+            "materials": 1,
+            "unassigned_faces": 0
+          },
+          "threshold": "All faces assigned",
+          "message": "1 material(s) cleanly assigned across all faces.",
+          "recommendation": null
+        },
+        {
+          "check_id": "texture_references",
+          "dimension": "materials_textures",
+          "name": "Texture & External Dependency Integrity",
+          "status": "PASS",
+          "mandatory": false,
+          "measured": 0,
+          "threshold": "0 missing",
+          "message": "Zero missing textures or broken linked libraries.",
+          "recommendation": null
+        },
+        {
+          "check_id": "pbr_maps",
+          "dimension": "materials_textures",
+          "name": "Roblox Material Mode",
+          "status": "PASS",
+          "mandatory": false,
+          "measured": "Simple Principled BSDF",
+          "threshold": "Allowed",
+          "message": "Simple Roblox-compatible material without external texture dependencies.",
+          "recommendation": null
+        }
+      ],
+      "failures": [],
+      "warnings": [],
+      "recommendations": []
+    },
+    {
+      "key": "proportions_scale",
+      "label": "Proportions & Scale",
+      "score": 7.5,
+      "max_score": 10.0,
+      "findings": [
+        {
+          "check_id": "negative_scale",
+          "dimension": "proportions_scale",
+          "name": "Scale Sign & Uniformity",
+          "status": "PASS",
+          "mandatory": false,
+          "measured": "Positive",
+          "threshold": "Positive scale",
+          "message": "No negative or extreme anisotropic scales detected.",
+          "recommendation": null
+        },
+        {
+          "check_id": "category_dimensions",
+          "dimension": "proportions_scale",
+          "name": "Category Dimensions & Proportions",
+          "status": "WARN",
+          "mandatory": false,
+          "measured": {
+            "meters": [
+              0.20298,
+              0.35,
+              0.044
+            ],
+            "studs": [
+              0.725,
+              1.25,
+              0.157
+            ]
+          },
+          "threshold": "height 0.1\u201335.0m",
+          "message": "Asset dimensions [0.203, 0.35, 0.044]m fall outside typical ENV expectations (height 0.1\u201335.0m).",
+          "recommendation": null
+        },
+        {
+          "check_id": "origin_grounding",
+          "dimension": "proportions_scale",
+          "name": "Origin & Grounding",
+          "status": "PASS",
+          "mandatory": false,
+          "measured": 0.02,
+          "threshold": "|min_z| <= 0.087m",
+          "message": "Asset properly grounded near Z=0 (min_z=0.02m).",
+          "recommendation": null
+        },
+        {
+          "check_id": "scene_units",
+          "dimension": "proportions_scale",
+          "name": "Blender Scene Units",
+          "status": "PASS",
+          "mandatory": false,
+          "measured": {
+            "system": "METRIC",
+            "scale_length": 1.0
+          },
+          "threshold": "METRIC / 1.0",
+          "message": "Standard Metric 1.0 unit configuration verified.",
+          "recommendation": null
+        }
+      ],
+      "failures": [],
+      "warnings": [
+        "Asset dimensions [0.203, 0.35, 0.044]m fall outside typical ENV expectations (height 0.1\u201335.0m)."
+      ],
+      "recommendations": [
+        "Verify real-world scale for ENV ([0.725, 1.25, 0.157] Roblox studs)."
+      ]
+    },
+    {
+      "key": "roblox_compatibility",
+      "label": "Roblox Compatibility",
+      "score": 15.0,
+      "max_score": 15.0,
+      "findings": [
+        {
+          "check_id": "roblox_export_file",
+          "dimension": "roblox_compatibility",
+          "name": "Export File Existence & Format",
+          "status": "PASS",
+          "mandatory": false,
+          "measured": {
+            "format": "FBX",
+            "bytes": 24396,
+            "filename": "mechanical_gear.fbx"
+          },
+          "threshold": "Valid non-empty FBX",
+          "message": "FBX export exists (24,396 bytes).",
+          "recommendation": null
+        },
+        {
+          "check_id": "roblox_export_roundtrip",
+          "dimension": "roblox_compatibility",
+          "name": "Export Readability & Mesh Comparison",
+          "status": "PASS",
+          "mandatory": false,
+          "measured": {
+            "meshes_before": 1,
+            "meshes_after": 1,
+            "tris_before": 192,
+            "tris_after": 192,
+            "dim_delta": 0.0
+          },
+          "threshold": "Geometry, dimensions, UVs & materials preserved",
+          "message": "FBX re-import verified: 1 mesh(es), 192 tris, dim_delta=0.00000m.",
+          "recommendation": null
+        },
+        {
+          "check_id": "roblox_file_naming",
+          "dimension": "roblox_compatibility",
+          "name": "Roblox Safe File Naming",
+          "status": "PASS",
+          "mandatory": false,
+          "measured": "mechanical_gear.fbx",
+          "threshold": "Safe filename",
+          "message": "Export filename 'mechanical_gear.fbx' is Roblox-safe.",
+          "recommendation": null
+        }
+      ],
+      "failures": [],
+      "warnings": [],
+      "recommendations": [
+        "Complete the Roblox Studio Manual Import Verification Checklist (Studio CLI import is not available in this environment)."
+      ]
+    },
+    {
+      "key": "collision_usability",
+      "label": "Collision Usability",
+      "score": 5.0,
+      "max_score": 5.0,
+      "findings": [
+        {
+          "check_id": "collision_suitability",
+          "dimension": "collision_usability",
+          "name": "Collision Usability",
+          "status": "PASS",
+          "mandatory": false,
+          "measured": {
+            "collision_meshes": 0,
+            "recommended_fidelity": "Hull"
+          },
+          "threshold": "Optional for category",
+          "message": "Geometry suitable for Roblox 'Hull' CollisionFidelity.",
+          "recommendation": null
+        }
+      ],
+      "failures": [],
+      "warnings": [],
+      "recommendations": []
+    },
+    {
+      "key": "visual_quality",
+      "label": "Visual Quality (Preview Readiness)",
+      "score": 10.0,
+      "max_score": 10.0,
+      "findings": [
+        {
+          "check_id": "visual_previews",
+          "dimension": "visual_quality",
+          "name": "Standardized Visual Previews & Render Sanity",
+          "status": "PASS",
+          "mandatory": false,
+          "measured": {
+            "views_generated": [
+              "back",
+              "closeup",
+              "front",
+              "left",
+              "material_beauty",
+              "right",
+              "three_quarter",
+              "top",
+              "wireframe"
+            ],
+            "contact_sheet": true
+          },
+          "threshold": "front, side, rear, 3/4, top + non-blank contrast",
+          "message": "All required preview angles rendered cleanly with non-blank visual contrast; ready for human visual inspection.",
+          "recommendation": null
+        }
+      ],
+      "failures": [],
+      "warnings": [],
+      "recommendations": [
+        "Human visual inspection required on generated preview renders before final approval."
+      ]
+    },
+    {
+      "key": "organisation_naming",
+      "label": "Organisation & Naming",
+      "score": 5.0,
+      "max_score": 5.0,
+      "findings": [
+        {
+          "check_id": "object_naming",
+          "dimension": "organisation_naming",
+          "name": "Descriptive Object Naming",
+          "status": "PASS",
+          "mandatory": false,
+          "measured": [
+            "Botanical_Leaf_Blade"
+          ],
+          "threshold": "Descriptive part names",
+          "message": "All 1 mesh object(s) have descriptive names.",
+          "recommendation": null
+        },
+        {
+          "check_id": "collection_organisation",
+          "dimension": "organisation_naming",
+          "name": "Collection Hierarchy",
+          "status": "PASS",
+          "mandatory": false,
+          "measured": [
+            "Asset_Mechanical_Gear"
+          ],
+          "threshold": "Dedicated collection",
+          "message": "Cleanly organized in collection(s): Asset_Mechanical_Gear.",
+          "recommendation": null
+        }
+      ],
+      "failures": [],
+      "warnings": [],
+      "recommendations": []
+    }
+  ],
+  "overall_score": 96.0,
+  "grade": "A",
+  "qa_status": "QA_PASSED",
+  "mandatory_failures": [],
+  "warnings": [
+    "Asset dimensions [0.203, 0.35, 0.044]m fall outside typical ENV expectations (height 0.1\u201335.0m)."
+  ],
+  "recommendations": [
+    "Verify real-world scale for ENV ([0.725, 1.25, 0.157] Roblox studs).",
+    "Complete the Roblox Studio Manual Import Verification Checklist (Studio CLI import is not available in this environment).",
+    "Human visual inspection required on generated preview renders before final approval."
+  ],
+  "final_approval_status": "APPROVED",
+  "human_approved": true,
+  "approved_by": "Local Reviewer",
+  "approved_at": "2026-11-18T13:43:34+00:00",
+  "human_approval_required": true,
+  "ai_visual_inspection_performed": false,
+  "visual_inspection_note": "Automated preview rendering & pixel sanity verified; human visual inspection is required before final approval.",
+  "roblox_studio_automation_available": false,
+  "roblox_studio_limitation_note": "Direct Roblox Studio import automation is not available in this headless environment; complete the manual Roblox Studio import checklist before publishing.",
+  "roblox_studio_verification_status": "PENDING",
+  "roblox_studio_verification": null,
+  "roblox_studio_checklist": [
+    {
+      "step": 1,
+      "check": "Import Asset via Roblox Studio Asset Manager / Mesh Importer",
+      "expected": "Import ENV_00001_Mechanical_Gear_Basic_LP_v001.fbx without 'Mesh exceeds 20,000 triangles' or format errors.",
+      "automated_in_blender": false,
+      "manual_studio_verification_required": true
+    },
+    {
+      "step": 2,
+      "check": "Verify Orientation & Scale in Studs",
+      "expected": "Front face points -Z, upright +Y in Studio, and character proportion matches R15 reference dummy.",
+      "automated_in_blender": false,
+      "manual_studio_verification_required": true
+    },
+    {
+      "step": 3,
+      "check": "Inspect SurfaceAppearance / Material Rendering",
+      "expected": "Materials, roughness, and textures render cleanly under Studio Future/ShadowMap lighting.",
+      "automated_in_blender": false,
+      "manual_studio_verification_required": true
+    },
+    {
+      "step": 4,
+      "check": "Test CollisionFidelity in Playtest",
+      "expected": "Verify CollisionFidelity (Box/Hull/Precise) matches gameplay walkthrough and physics behavior.",
+      "automated_in_blender": false,
+      "manual_studio_verification_required": true
+    }
+  ],
+  "preview_images": {
+    "front": "previews/front.png",
+    "back": "previews/back.png",
+    "left": "previews/left.png",
+    "right": "previews/right.png",
+    "top": "previews/top.png",
+    "three_quarter": "previews/three_quarter.png",
+    "closeup": "previews/closeup.png",
+    "wireframe": "previews/wireframe.png",
+    "material_beauty": "previews/material_beauty.png"
+  },
+  "contact_sheet": "previews/contact_sheet.png",
+  "google_drive": {
+    "file_id": null,
+    "url": null
+  }
+}
