@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Blender Asset Vault — Autonomous 3D Library</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "/static/vendor/three/build/three.module.js",
+        "three/addons/": "/static/vendor/three/jsm/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand-mark">BV</div>
+      <div>
+        <h1>Blender Asset Vault</h1>
+        <p class="subtitle">Local-First 3D Mesh Quality Pipeline &amp; Google Drive Library</p>
+      </div>
+    </div>
+    <div class="system-pills" id="system-pills">
+      <span class="pill pill-muted">Checking Blender...</span>
+    </div>
+    <div class="topbar-actions">
+      <button class="btn btn-primary" id="btn-open-generate">+ Generate 3D</button>
+      <button class="btn btn-secondary" id="btn-open-import">+ Import Model</button>
+      <button class="btn btn-ghost" id="btn-open-drive">Google Drive</button>
+      <button class="btn btn-ghost" id="btn-reindex" title="Rebuild SQLite index from local manifests">Re-index</button>
+    </div>
+  </header>
+
+  <main class="container">
+    <section class="toolbar">
+      <div class="search-wrap">
+        <input type="search" id="search-input" placeholder="Search assets by name, tags, description, or license..." />
+      </div>
+      <div class="filter-group">
+        <select id="status-filter" aria-label="Filter by lifecycle status">
+          <option value="All">All Statuses</option>
+          <option value="PROCESSING">Processing</option>
+          <option value="TECHNICAL_TESTING">Technical Testing</option>
+          <option value="VISUAL_TESTING">Visual Testing</option>
+          <option value="AWAITING_HUMAN_APPROVAL">Awaiting Human Approval</option>
+          <option value="APPROVED">Approved</option>
+          <option value="REJECTED">Rejected</option>
+          <option value="UPLOADED">Uploaded</option>
+          <option value="FAILED">Failed</option>
+        </select>
+      </div>
+    </section>
+
+    <nav class="category-bar" id="category-bar" aria-label="Asset categories"></nav>
+
+    <section class="stats-strip" id="stats-strip"></nav>
+
+    <section id="asset-grid" class="asset-grid">
+      <div class="empty-state">Loading asset catalogue...</div>
+    </section>
+  </main>
+
+  <!-- Asset Detail & Human Inspection Modal -->
+  <dialog id="detail-modal" class="modal modal-xl">
+    <div class="modal-header">
+      <div>
+        <h2 id="detail-title">Asset Inspector</h2>
+        <p id="detail-subtitle" class="muted"></p>
+      </div>
+      <button class="btn btn-ghost" data-close="detail-modal">Close ✕</button>
+    </div>
+    <div class="detail-layout">
+      <div class="viewer-column">
+        <div class="viewer-tabs">
+          <button class="vtab active" data-vtab="3d">Interactive 3D (GLB)</button>
+          <button class="vtab" data-vtab="sheet">Contact Sheet</button>
+          <button class="vtab" data-vtab="turntable">360° Turntable</button>
+          <button class="vtab" data-vtab="angles">All 9 Angles</button>
+        </div>
+
+        <div id="vpanel-3d" class="vpanel active">
+          <div id="three-container" class="three-canvas-wrap"></div>
+          <div class="viewer-controls">
+            <button class="btn btn-xs" id="btn-toggle-wire">Toggle Wireframe</button>
+            <button class="btn btn-xs" id="btn-toggle-spin">Toggle Auto-Rotate</button>
+            <button class="btn btn-xs" id="btn-reset-cam">Reset Camera</button>
+            <span id="three-status" class="muted small"></span>
+          </div>
+        </div>
+
+        <div id="vpanel-sheet" class="vpanel">
+          <img id="img-contact-sheet" class="inspect-hero-img" alt="Multi-angle inspection contact sheet" />
+        </div>
+
+        <div id="vpanel-turntable" class="vpanel">
+          <img id="img-turntable" class="inspect-hero-img" alt="360 degree turntable preview" />
+        </div>
+
+        <div id="vpanel-angles" class="vpanel">
+          <div class="angles-grid" id="angles-grid"></div>
+        </div>
+      </div>
+
+      <div class="inspector-column">
+        <div class="inspector-tabs">
+          <button class="itab active" data-itab="overview">Overview &amp; Actions</button>
+          <button class="itab" data-itab="tech-qa">Technical QA</button>
+          <button class="itab" data-itab="visual-qa">Visual Review &amp; Approval</button>
+          <button class="itab" data-itab="drive">Versions &amp; Drive</button>
+        </div>
+
+        <div id="ipanel-overview" class="ipanel active"></div>
+        <div id="ipanel-tech-qa" class="ipanel"></div>
+        <div id="ipanel-visual-qa" class="ipanel"></div>
+        <div id="ipanel-drive" class="ipanel"></div>
+      </div>
+    </div>
+  </dialog>
+
+  <!-- Generate Procedural Model Modal -->
+  <dialog id="generate-modal" class="modal modal-md">
+    <div class="modal-header">
+      <h2>Generate Procedural 3D Asset</h2>
+      <button class="btn btn-ghost" data-close="generate-modal">Close ✕</button>
+    </div>
+    <form id="generate-form" class="form-stack">
+      <div class="preset-chips">
+        <span class="small muted">Quick presets:</span>
+        <button type="button" class="chip" data-prompt="Create a detailed wooden chair with four legs, a curved backrest and a realistic wooden material." data-name="Oak Dining Chair" data-cat="Furniture">Wooden Chair</button>
+        <button type="button" class="chip" data-prompt="Create a walnut wooden dining table with four tapered legs." data-name="Walnut Table" data-cat="Furniture">Wooden Table</button>
+        <button type="button" class="chip" data-prompt="Create a precision mechanical spur gear with 16 teeth and steel material." data-name="Precision Spur Gear" data-cat="Mechanical Objects">Spur Gear</button>
+        <button type="button" class="chip" data-prompt="Create a glazed ceramic vase." data-name="Sage Ceramic Vase" data-cat="Household Objects">Ceramic Vase</button>
+        <button type="button" class="chip" data-prompt="Create a stylized botanical leaf." data-name="Botanical Leaf" data-cat="Nature">Botanical Leaf</button>
+      </div>
+      <label>
+        <span>Asset Prompt / Specification *</span>
+        <textarea id="gen-prompt" rows="3" required placeholder="e.g. Create a detailed wooden chair with four legs, a curved backrest and a realistic wooden material."></textarea>
+      </label>
+      <div class="form-row">
+        <label>
+          <span>Asset Name (optional)</span>
+          <input type="text" id="gen-name" placeholder="Auto-generated if blank" />
+        </label>
+        <label>
+          <span>Category</span>
+          <select id="gen-category"></select>
+        </label>
+      </div>
+      <div class="form-row">
+        <label>
+          <span>Geometry QA Profile</span>
+          <select id="gen-profile"></select>
+        </label>
+        <label>
+          <span>Tags (comma-separated)</span>
+          <input type="text" id="gen-tags" placeholder="furniture, wood, oak" />
+        </label>
+      </div>
+      <div id="gen-feedback" class="feedback hidden"></div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-ghost" data-close="generate-modal">Cancel</button>
+        <button type="submit" class="btn btn-primary" id="btn-submit-generate">Run Blender Pipeline</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Import Existing Model Modal -->
+  <dialog id="import-modal" class="modal modal-md">
+    <div class="modal-header">
+      <h2>Import Existing 3D Model</h2>
+      <button class="btn btn-ghost" data-close="import-modal">Close ✕</button>
+    </div>
+    <form id="import-form" class="form-stack">
+      <label>
+        <span>3D Model File (.blend, .obj, .fbx, .stl, .glb, .gltf) *</span>
+        <input type="file" id="imp-file" accept=".blend,.obj,.fbx,.stl,.glb,.gltf" required />
+      </label>
+      <div class="form-row">
+        <label>
+          <span>Asset Name</span>
+          <input type="text" id="imp-name" placeholder="Derived from filename if blank" />
+        </label>
+        <label>
+          <span>Category</span>
+          <select id="imp-category"></select>
+        </label>
+      </div>
+      <div class="form-row">
+        <label>
+          <span>Geometry QA Profile</span>
+          <select id="imp-profile"></select>
+        </label>
+        <label>
+          <span>Tags (comma-separated)</span>
+          <input type="text" id="imp-tags" placeholder="imported, prop" />
+        </label>
+      </div>
+      <label>
+        <span>Description</span>
+        <input type="text" id="imp-description" placeholder="Brief description of what this model depicts" />
+      </label>
+      <fieldset class="fieldset">
+        <legend>Provenance &amp; Licensing (Never assumed automatically)</legend>
+        <div class="form-row">
+          <label>
+            <span>Provenance Source</span>
+            <select id="imp-provenance-type">
+              <option value="user_uploaded">Uploaded by Me</option>
+              <option value="external_import">Imported from External Source</option>
+            </select>
+          </label>
+          <label>
+            <span>Author / Creator</span>
+            <input type="text" id="imp-author" placeholder="Unknown if unspecified" />
+          </label>
+        </div>
+        <div class="form-row">
+          <label>
+            <span>Source URL</span>
+            <input type="url" id="imp-source-url" placeholder="https://..." />
+          </label>
+          <label>
+            <span>License</span>
+            <input type="text" id="imp-license" placeholder="e.g. CC-BY 4.0, CC0, or leave blank" />
+          </label>
+        </div>
+        <label>
+          <span>Usage Restrictions</span>
+          <input type="text" id="imp-restrictions" placeholder="Commercial restrictions / attribution notes" />
+        </label>
+      </fieldset>
+      <label class="checkbox-inline">
+        <input type="checkbox" id="imp-allow-dup" />
+        <span>Allow import even if an identical file hash already exists</span>
+      </label>
+      <div id="imp-feedback" class="feedback hidden"></div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-ghost" data-close="import-modal">Cancel</button>
+        <button type="submit" class="btn btn-primary" id="btn-submit-import">Import &amp; Run QA</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Google Drive Settings & Folder Picker Modal -->
+  <dialog id="drive-modal" class="modal modal-md">
+    <div class="modal-header">
+      <h2>Google Drive Remote Vault (Official API v3)</h2>
+      <button class="btn btn-ghost" data-close="drive-modal">Close ✕</button>
+    </div>
+    <div id="drive-panel-body" class="form-stack"></div>
+  </dialog>
+
+  <script type="module" src="/static/app.js"></script>
+</body>
+</html>
