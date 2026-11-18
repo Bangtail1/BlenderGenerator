@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import shutil
 import tarfile
@@ -9,6 +10,7 @@ import uuid
 import zipfile
 from pathlib import Path
 from typing import Optional
+from urllib.parse import unquote
 
 from ..blender_worker.runner import BlenderWorkerError, BlenderWorkerRunner
 from ..config import Settings
@@ -18,38 +20,173 @@ from .models import ReferenceInspectionReport
 logger = logging.getLogger("blender_vault.reference.inspector")
 
 SUPPORTED_3D_EXTENSIONS = (".blend", ".glb", ".gltf", ".fbx", ".obj", ".stl")
+MAX_ARCHIVE_MEMBERS = 1000
+MAX_ARCHIVE_EXTRACTED_BYTES = 512 * 1024 * 1024  # 512 MiB
+_COPY_CHUNK_BYTES = 64 * 1024
 
 
-def _safe_extract_zip(archive_path: Path, dest_dir: Path) -> None:
+def _copy_stream_with_budget(
+    src,
+    dst,
+    *,
+    remaining_bytes: int,
+    archive_name: str,
+    member_name: str,
+) -> int:
+    """Copy stream chunk-by-chunk, raising ValueError if copied bytes exceed remaining_bytes."""
+    copied = 0
+    while True:
+        chunk = src.read(_COPY_CHUNK_BYTES)
+        if not chunk:
+            break
+        copied += len(chunk)
+        if copied > remaining_bytes:
+            raise ValueError(
+                f"Archive '{archive_name}' exceeded maximum extracted size budget while reading '{member_name}'."
+            )
+        dst.write(chunk)
+    return copied
+
+
+def _resolve_safe_member_target(
+    dest_root: Path,
+    member_name: str,
+    *,
+    member_count: int,
+    max_members: int,
+    archive_name: str,
+    member_kind: str = "archive",
+) -> Path:
+    """Enforce member-count limit and path containment inside dest_root."""
+    if member_count > max_members:
+        raise ValueError(
+            f"Archive '{archive_name}' exceeded maximum member limit ({max_members})."
+        )
+    target = (dest_root / member_name).resolve()
+    if dest_root != target and dest_root not in target.parents:
+        raise ValueError(f"Unsafe {member_kind} member path blocked: {member_name}")
+    return target
+
+
+def _safe_extract_zip(
+    archive_path: Path,
+    dest_dir: Path,
+    *,
+    max_members: int = MAX_ARCHIVE_MEMBERS,
+    max_bytes: int = MAX_ARCHIVE_EXTRACTED_BYTES,
+) -> None:
     dest_root = dest_dir.resolve()
+    member_count = 0
+    remaining_bytes = max_bytes
     with zipfile.ZipFile(archive_path, "r") as zf:
         for member in zf.infolist():
-            target = (dest_root / member.filename).resolve()
-            if dest_root != target and dest_root not in target.parents:
-                raise ValueError(f"Unsafe archive member path blocked: {member.filename}")
+            member_count += 1
+            target = _resolve_safe_member_target(
+                dest_root,
+                member.filename,
+                member_count=member_count,
+                max_members=max_members,
+                archive_name=archive_path.name,
+                member_kind="archive",
+            )
             if member.is_dir():
                 target.mkdir(parents=True, exist_ok=True)
             else:
+                if member.file_size > remaining_bytes:
+                    raise ValueError(
+                        f"Archive '{archive_path.name}' exceeded maximum extracted size budget ({max_bytes} bytes)."
+                    )
                 target.parent.mkdir(parents=True, exist_ok=True)
                 with zf.open(member, "r") as src, target.open("wb") as dst:
-                    shutil.copyfileobj(src, dst)
+                    copied = _copy_stream_with_budget(
+                        src,
+                        dst,
+                        remaining_bytes=remaining_bytes,
+                        archive_name=archive_path.name,
+                        member_name=member.filename,
+                    )
+                    remaining_bytes -= copied
 
 
-def _safe_extract_tar(archive_path: Path, dest_dir: Path) -> None:
+def _safe_extract_tar(
+    archive_path: Path,
+    dest_dir: Path,
+    *,
+    max_members: int = MAX_ARCHIVE_MEMBERS,
+    max_bytes: int = MAX_ARCHIVE_EXTRACTED_BYTES,
+) -> None:
     dest_root = dest_dir.resolve()
+    member_count = 0
+    remaining_bytes = max_bytes
     with tarfile.open(archive_path, "r:*") as tf:
         for member in tf.getmembers():
-            target = (dest_root / member.name).resolve()
-            if dest_root != target and dest_root not in target.parents:
-                raise ValueError(f"Unsafe tar member path blocked: {member.name}")
+            member_count += 1
+            target = _resolve_safe_member_target(
+                dest_root,
+                member.name,
+                member_count=member_count,
+                max_members=max_members,
+                archive_name=archive_path.name,
+                member_kind="tar",
+            )
             if member.isdir():
                 target.mkdir(parents=True, exist_ok=True)
             elif member.isfile():
+                if member.size > remaining_bytes:
+                    raise ValueError(
+                        f"Archive '{archive_path.name}' exceeded maximum extracted size budget ({max_bytes} bytes)."
+                    )
                 src = tf.extractfile(member)
                 if src is not None:
                     target.parent.mkdir(parents=True, exist_ok=True)
                     with src, target.open("wb") as dst:
-                        shutil.copyfileobj(src, dst)
+                        copied = _copy_stream_with_budget(
+                            src,
+                            dst,
+                            remaining_bytes=remaining_bytes,
+                            archive_name=archive_path.name,
+                            member_name=member.name,
+                        )
+                        remaining_bytes -= copied
+
+
+def _copy_gltf_external_resources(source_gltf: Path, isolated_dir: Path) -> None:
+    """Copy external .bin buffers and image URIs referenced by a standalone .gltf into isolated_dir."""
+    try:
+        payload = json.loads(source_gltf.read_text(encoding="utf-8"))
+    except Exception:
+        return
+    if not isinstance(payload, dict):
+        return
+
+    source_root = source_gltf.parent.resolve()
+    isolated_root = isolated_dir.resolve()
+
+    entries: list[dict] = []
+    for section in ("buffers", "images"):
+        section_items = payload.get(section)
+        if isinstance(section_items, list):
+            entries.extend(item for item in section_items if isinstance(item, dict))
+
+    for item in entries:
+        uri = item.get("uri")
+        if not isinstance(uri, str) or not uri.strip():
+            continue
+        raw_uri = uri.strip()
+        if raw_uri.startswith("data:") or "://" in raw_uri:
+            continue
+        rel_path = Path(unquote(raw_uri))
+        if rel_path.is_absolute():
+            continue
+        src_ref = (source_root / rel_path).resolve()
+        dst_ref = (isolated_root / rel_path).resolve()
+        if src_ref == source_root or source_root not in src_ref.parents:
+            continue
+        if dst_ref == isolated_root or isolated_root not in dst_ref.parents:
+            continue
+        if src_ref.is_file():
+            dst_ref.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src_ref, dst_ref)
 
 
 def _locate_primary_3d_file(search_dir: Path) -> Optional[Path]:
@@ -112,6 +249,8 @@ class ReferenceInspectorService:
             elif ext in SUPPORTED_3D_EXTENSIONS:
                 copied = isolated_dir / source_file.name
                 shutil.copy2(source_file, copied)
+                if ext == ".gltf":
+                    _copy_gltf_external_resources(source_file, isolated_dir)
                 target_to_open = copied
             else:
                 return ReferenceInspectionReport(

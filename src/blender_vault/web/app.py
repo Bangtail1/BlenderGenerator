@@ -60,7 +60,7 @@ STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 
 class SelectFolderBody(BaseModel):
-    folder_id: str
+    folder_id: Optional[str] = None
     folder_name: Optional[str] = None
 
 
@@ -100,7 +100,8 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
-        if start_scheduler and cfg.collection_scheduler_enabled:
+        ref_drive.recover_abandoned_uploads()
+        if start_scheduler:
             ref_scheduler.start()
         try:
             yield
@@ -400,9 +401,11 @@ def create_app(
     @app.post("/api/gdrive/select-folder")
     def gdrive_select_folder(body: SelectFolderBody) -> dict[str, Any]:
         try:
-            selected = gdrive.select_destination_folder(body.folder_id, body.folder_name)
-            tree = gdrive.ensure_vault_folder_tree(body.folder_id)
-            return {"selected": selected, "vault_tree": tree}
+            if body.folder_id and body.folder_id.strip():
+                selected = gdrive.select_destination_folder(body.folder_id, body.folder_name)
+                tree = gdrive.ensure_vault_folder_tree(selected["folder_id"])
+                return {"selected": selected, "vault_tree": tree}
+            return gdrive.create_or_use_root_folder(body.folder_name)
         except (DriveNotConfiguredError, DriveNotAuthenticatedError, ValueError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 

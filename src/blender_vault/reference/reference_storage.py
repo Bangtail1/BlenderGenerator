@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import shutil
+import tempfile
 from pathlib import Path
 from typing import Any, Optional
 
@@ -203,6 +205,78 @@ class ReferenceStorage:
         self._atomic_write_text(out, json.dumps(payload, indent=2))
         return out
 
+    _STORAGE_SUBDIRS = frozenset(
+        {
+            "assets",
+            "previews",
+            "metadata",
+            "inspections",
+            "attribution",
+            "benchmark_reports",
+            "collection_logs",
+            "database",
+        }
+    )
+
+    def _rebase_path(self, raw_path: Optional[str], *, fallback_rel: Optional[Path] = None) -> Optional[str]:
+        """Rebase a stored artifact path to self.root_dir using its storage-relative subpath."""
+        if raw_path and raw_path.strip():
+            parts = [p for p in re.split(r"[\\/]+", raw_path.strip()) if p and p != "."]
+            candidates = [
+                (self.root_dir / Path(*parts[idx:])).resolve()
+                for idx in range(len(parts) - 1, -1, -1)
+                if parts[idx] in self._STORAGE_SUBDIRS
+            ]
+            for candidate in candidates:
+                if candidate.exists():
+                    return str(candidate)
+            if candidates:
+                return str(candidates[0])
+            raw_obj = Path(raw_path.strip())
+            if not raw_obj.is_absolute():
+                return str((self.root_dir / raw_obj).resolve())
+            if fallback_rel is not None:
+                return str((self.root_dir / fallback_rel).resolve())
+            return raw_path
+        if fallback_rel is not None:
+            candidate = (self.root_dir / fallback_rel).resolve()
+            if candidate.exists():
+                return str(candidate)
+        return raw_path
+
+    def _rebase_record_paths(self, rec: ReferenceAssetRecord, meta_path: Path) -> None:
+        """Normalize all artifact paths on a restored ReferenceAssetRecord to self.root_dir."""
+        asset_rel_dir = Path("assets") / category_folder_slug(rec.primary_category) / str(rec.blendswap_id)
+        rec.local_dir = self._rebase_path(rec.local_dir, fallback_rel=asset_rel_dir)
+
+        if rec.primary_file_path:
+            fname = re.split(r"[\\/]+", rec.primary_file_path.strip())[-1]
+            rec.primary_file_path = self._rebase_path(
+                rec.primary_file_path,
+                fallback_rel=asset_rel_dir / fname if fname else None,
+            )
+        if rec.blend_file_path:
+            bname = re.split(r"[\\/]+", rec.blend_file_path.strip())[-1]
+            rec.blend_file_path = self._rebase_path(
+                rec.blend_file_path,
+                fallback_rel=asset_rel_dir / bname if bname else None,
+            )
+
+        rebased_previews: list[str] = []
+        for p in rec.preview_paths:
+            pname = re.split(r"[\\/]+", p.strip())[-1] if p.strip() else ""
+            rebased = self._rebase_path(
+                p,
+                fallback_rel=Path("previews") / str(rec.blendswap_id) / pname if pname else None,
+            )
+            if rebased:
+                rebased_previews.append(rebased)
+        rec.preview_paths = rebased_previews
+
+        rec.metadata_path = str(meta_path.resolve())
+        attr_rel = Path("attribution") / f"{rec.blendswap_id}_attribution.json"
+        rec.attribution_path = self._rebase_path(rec.attribution_path, fallback_rel=attr_rel)
+
     def rebuild_database_from_disk(self, ref_db: ReferenceDatabase) -> dict[str, Any]:
         """Reconstruct Branch 2 SQLite catalogue from portable JSON files under reference_library/."""
         discovered = 0
@@ -213,6 +287,7 @@ class ReferenceStorage:
             discovered += 1
             try:
                 rec = ReferenceAssetRecord.model_validate_json(meta_path.read_text(encoding="utf-8"))
+                self._rebase_record_paths(rec, meta_path)
                 ref_db.upsert_reference_asset(rec)
                 insp_path = self.inspections_dir / f"{rec.blendswap_id}.json"
                 if insp_path.is_file():
@@ -231,6 +306,7 @@ class ReferenceStorage:
         for b_path in sorted(self.benchmark_reports_dir.glob("*.json")):
             try:
                 report = BenchmarkReport.model_validate_json(b_path.read_text(encoding="utf-8"))
+                report.report_path = str(b_path.resolve())
                 ref_db.save_benchmark_report(report)
             except Exception as exc:
                 errors.append(f"{b_path.name}: {exc}")
@@ -240,6 +316,20 @@ class ReferenceStorage:
     @staticmethod
     def _atomic_write_text(target: Path, content: str) -> None:
         target.parent.mkdir(parents=True, exist_ok=True)
-        tmp = target.with_suffix(target.suffix + ".tmp")
-        tmp.write_text(content, encoding="utf-8")
-        tmp.replace(target)
+        tmp_path: Optional[Path] = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w",
+                encoding="utf-8",
+                dir=target.parent,
+                prefix=f".{target.name}.",
+                suffix=".tmp",
+                delete=False,
+            ) as fh:
+                tmp_path = Path(fh.name)
+                fh.write(content)
+            tmp_path.replace(target)
+        except Exception:
+            if tmp_path is not None:
+                tmp_path.unlink(missing_ok=True)
+            raise

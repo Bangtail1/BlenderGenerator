@@ -78,9 +78,9 @@ _CATEGORY_SYNONYMS: dict[str, str] = {
     "mechanical_objects": "Mechanical components",
     "machinery": "Mechanical components",
     "hardware": "Mechanical components",
-    "other": "Other",
-    "miscellaneous": "Other",
 }
+
+_GENERIC_CATEGORY_NAMES = frozenset({"", "other", "misc", "miscellaneous", "uncategorized"})
 
 _KEYWORD_TO_PRIMARY: list[tuple[tuple[str, ...], str]] = [
     (("chair", "stool", "sofa", "couch", "table", "desk", "bed", "cabinet", "bookshelf", "bench"), "Furniture"),
@@ -110,6 +110,8 @@ def classify_primary_category(
     name = (summary.category.name or "").strip().lower().replace("-", "_").replace(" ", "_")
 
     for candidate in (slug, name):
+        if candidate in _GENERIC_CATEGORY_NAMES:
+            continue
         if candidate in _CATEGORY_SYNONYMS:
             return _CATEGORY_SYNONYMS[candidate]
 
@@ -121,7 +123,7 @@ def classify_primary_category(
 
     # Preserve unrecognized genuine BlendSwap subject category if non-empty & auto-extend allowed
     raw_name = (summary.category.name or "").strip()
-    if allow_auto_extend and raw_name and raw_name.lower() not in {"other", "misc", "miscellaneous", "uncategorized"}:
+    if allow_auto_extend and raw_name and raw_name.lower() not in _GENERIC_CATEGORY_NAMES:
         if raw_name in PRIMARY_CATEGORIES:
             return raw_name
         if ref_db is not None:

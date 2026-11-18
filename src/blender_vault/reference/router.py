@@ -134,6 +134,8 @@ def build_reference_router(app_state: Any) -> APIRouter:
             return updated.model_dump()
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         except (DriveNotConfiguredError, DriveNotAuthenticatedError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -177,6 +179,7 @@ def build_reference_router(app_state: Any) -> APIRouter:
             force=True,
             trigger_type="manual",
             max_downloads=opts.max_downloads,
+            sync_to_drive=opts.sync_to_drive,
         )
         return cycle.model_dump() if cycle else {"status": "NO_ACTION"}
 

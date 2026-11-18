@@ -72,6 +72,7 @@ def test_branch2_api_dashboard_and_branch1_auto_benchmark_e2e(tmp_path: Path) ->
             assert home.status_code == 200 and "Reference Engine (Branch 2)" in home.text
             ref_js = client.get("/static/reference_dashboard.js")
             assert ref_js.status_code == 200 and "createReferenceDashboard" in ref_js.text
+            assert "ref-open-btn" in ref_js.text and "ref-library-grid" in ref_js.text
 
             # 2. Live status & discovery preview
             st = client.get("/api/reference/status").json()

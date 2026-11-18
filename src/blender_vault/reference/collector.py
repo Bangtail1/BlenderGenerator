@@ -187,12 +187,22 @@ class CollectionCycleService:
     ) -> CollectionCycleRecord:
         downloaded_now = 0
         failed_now = 0
+        retry_pending = 0
+        unexpected_charge_detected = False
 
         for item in queue:
             if item.status == "COMPLETED":
                 downloaded_now += 1
                 continue
             if item.status == "SKIPPED":
+                continue
+            if item.status == "FAILED":
+                failed_now += 1
+                continue
+            if unexpected_charge_detected:
+                item.status = "SKIPPED"
+                item.last_error = "Halted remaining downloads after unexpected credit charge."
+                self.ref_db.update_queue_item(item)
                 continue
 
             rec = self.ref_db.get_reference_asset(item.blendswap_id)
@@ -233,9 +243,18 @@ class CollectionCycleService:
             # If already downloaded locally (crash happened during inspection/grading!), resume post-download stages
             already_local = bool(rec.primary_file_path and Path(rec.primary_file_path).is_file())
             if not already_local:
+                credits_before = cycle.credits_spent
                 success = self._download_queue_item(cycle, item, rec)
+                if cycle.credits_spent > credits_before and not self.settings.allow_credit_spend:
+                    unexpected_charge_detected = True
+                    cycle.error_message = (
+                        "Halted remaining queue items because BlendSwap charged credits while allow_credit_spend=False."
+                    )
                 if not success:
-                    failed_now += 1
+                    if item.status == "RETRY_WAIT":
+                        retry_pending += 1
+                    else:
+                        failed_now += 1
                     continue
                 rec = self.ref_db.get_reference_asset(item.blendswap_id) or rec
 
@@ -258,13 +277,18 @@ class CollectionCycleService:
 
         cycle.downloaded_count = downloaded_now
         cycle.failed_count = failed_now
-        if downloaded_now == 0 and failed_now > 0:
+        if retry_pending > 0:
+            cycle.status = "RETRY_WAIT"
+            cycle.completed_at = None
+        elif downloaded_now == 0 and failed_now > 0:
             cycle.status = "FAILED"
-        elif failed_now > 0 or cycle.shortage_count > 0:
+            cycle.completed_at = utc_now_iso()
+        elif failed_now > 0 or cycle.shortage_count > 0 or unexpected_charge_detected:
             cycle.status = "PARTIAL"
+            cycle.completed_at = utc_now_iso()
         else:
             cycle.status = "COMPLETED"
-        cycle.completed_at = utc_now_iso()
+            cycle.completed_at = utc_now_iso()
         self.ref_db.update_cycle(cycle)
 
         log_path = self.ref_storage.write_collection_log(cycle, self.ref_db.get_queue_for_cycle(cycle.cycle_id))
@@ -298,13 +322,6 @@ class CollectionCycleService:
         tmp_file = tmp_dl_dir / Path(filename).name
 
         try:
-            # Verify allowance unless within 24h free repeat window
-            is_repeat = self.ref_db.has_free_repeat_window(rec.blendswap_id, item.file_id)
-            if not is_repeat:
-                acct = self.client.get_me()
-                if acct.free_downloads_remaining <= 0:
-                    raise BlendSwapAllowanceExhaustedError("Remaining free allowance dropped to 0 (shared with website).")
-
             ticket, size_b, sha, md5 = self.client.download_with_refresh(
                 asset_id=rec.blendswap_id,
                 file_id=item.file_id,
@@ -370,10 +387,11 @@ class CollectionCycleService:
         except Exception as exc:
             logger.warning("Download attempt %d failed for BlendSwap #%s: %s", item.attempts, rec.blendswap_id, exc)
             item.last_error = str(exc)
-            item.status = "RETRY_WAIT" if item.attempts < item.max_attempts else "FAILED"
+            exhausted = item.attempts >= item.max_attempts
+            item.status = "FAILED" if exhausted else "RETRY_WAIT"
             self.ref_db.update_queue_item(item)
 
-            rec.status = ReferenceAssetStatus.FAILED
+            rec.status = ReferenceAssetStatus.FAILED if exhausted else ReferenceAssetStatus.QUEUED
             rec.error_message = str(exc)
             self.ref_db.upsert_reference_asset(rec, selected_file_id=item.file_id)
             self.ref_db.record_download_history(

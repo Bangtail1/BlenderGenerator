@@ -50,10 +50,25 @@ def test_full_end_to_end_workflow_via_api(tmp_path: Path) -> None:
         )
         client = TestClient(app)
 
-        # 1. Health check
+        # 1. Health check & Option 1 app-managed root folder creation
         h = client.get("/api/health").json()
         assert h["blender"]["available"] is True
         assert h["gdrive"]["authenticated"] is True
+
+        init_folder = client.post("/api/gdrive/select-folder", json={"folder_name": "Blender Asset Vault"})
+        assert init_folder.status_code == 200, init_folder.text
+        init_data = init_folder.json()
+        assert init_data["selected"]["folder_name"] == "Blender Asset Vault"
+        assert init_data["vault_tree"]["approved_id"]
+        root_fid = init_data["selected"]["folder_id"]
+
+        # Selecting via full Drive URL also works cleanly
+        url_sel = client.post(
+            "/api/gdrive/select-folder",
+            json={"folder_id": f"https://drive.google.com/drive/folders/{root_fid}?usp=sharing"},
+        )
+        assert url_sel.status_code == 200, url_sel.text
+        assert url_sel.json()["selected"]["folder_id"] == root_fid
 
         # 2. Generate detailed wooden chair from prompt
         gen_resp = client.post(

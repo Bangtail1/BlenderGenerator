@@ -214,64 +214,93 @@ export function createReferenceDashboard({ api, escapeHtml, badge, showFeedback,
                   ${(a.technical_categories || []).slice(0, 3).map((t) => badge(t, "PROCESSING")).join("")}
                   ${badge(`Drive: ${a.drive_sync_status}`, a.drive_sync_status)}
                 </div>
+                <div class="card-actions">
+                  <button type="button" class="btn btn-secondary btn-xs ref-open-btn" data-refid="${a.blendswap_id}">Inspect Details</button>
+                </div>
               </div>
             </article>`;
           })
           .join("")
       : `<div class="empty-state">No reference assets match these filters yet.</div>`;
 
-    document.getElementById("refpanel-library").innerHTML = `
-      <div class="two-col">
-        <div class="panel-card">
-          <h3>Library Distributions (${lib.total_assets || 0} Collected / ${lib.total_catalog_records || 0} Total)</h3>
-          <div class="small"><strong>Categories:</strong> ${distSummary(lib.categories)}</div>
-          <div class="small"><strong>Licenses:</strong> ${distSummary(lib.license_distribution)}</div>
-        </div>
-        <div class="panel-card">
-          <h3>Quality &amp; Blender Version Distributions</h3>
-          <div class="small"><strong>Grades:</strong> ${distSummary(lib.quality_distribution)}</div>
-          <div class="small"><strong>Blender Versions:</strong> ${distSummary(lib.blender_version_distribution)}</div>
-        </div>
+    const panel = document.getElementById("refpanel-library");
+    if (!panel.querySelector("#ref-library-grid")) {
+      panel.innerHTML = `
+        <div id="ref-library-distributions" class="two-col"></div>
+
+        <section class="toolbar">
+          <div class="search-wrap"><input type="search" id="ref-search-input" placeholder="Search reference assets by title, ID, author, tags..." value="${escapeHtml(refState.search)}" /></div>
+          <div><select id="ref-cat-filter">${cats.map((c) => `<option value="${escapeHtml(c)}" ${c === refState.primaryCategory ? "selected" : ""}>Cat: ${escapeHtml(c)}</option>`).join("")}</select></div>
+          <div><select id="ref-lic-filter">${lics.map((l) => `<option value="${escapeHtml(l)}" ${l === refState.licenseKey ? "selected" : ""}>Lic: ${escapeHtml(l)}</option>`).join("")}</select></div>
+          <div><select id="ref-grade-filter">${grades.map((g) => `<option value="${escapeHtml(g)}" ${g === refState.gradeLetter ? "selected" : ""}>Grade: ${escapeHtml(g)}</option>`).join("")}</select></div>
+          <div><select id="ref-sort-select">
+            <option value="updated_at" ${refState.sortBy === "updated_at" ? "selected" : ""}>Sort: Recent</option>
+            <option value="technical_score" ${refState.sortBy === "technical_score" ? "selected" : ""}>Sort: Highest Grade</option>
+            <option value="downloads" ${refState.sortBy === "downloads" ? "selected" : ""}>Sort: Most Downloaded</option>
+            <option value="usefulness" ${refState.sortBy === "usefulness" ? "selected" : ""}>Sort: Most Useful</option>
+          </select></div>
+        </section>
+
+        <section id="ref-library-grid" class="asset-grid"></section>
+      `;
+
+      document.getElementById("ref-search-input").addEventListener("input", (e) => {
+        refState.search = e.target.value;
+        loadReferenceAssets();
+      });
+      document.getElementById("ref-cat-filter").addEventListener("change", (e) => {
+        refState.primaryCategory = e.target.value;
+        loadReferenceAssets();
+      });
+      document.getElementById("ref-lic-filter").addEventListener("change", (e) => {
+        refState.licenseKey = e.target.value;
+        loadReferenceAssets();
+      });
+      document.getElementById("ref-grade-filter").addEventListener("change", (e) => {
+        refState.gradeLetter = e.target.value;
+        loadReferenceAssets();
+      });
+      document.getElementById("ref-sort-select").addEventListener("change", (e) => {
+        refState.sortBy = e.target.value;
+        loadReferenceAssets();
+      });
+    } else {
+      const catSelect = document.getElementById("ref-cat-filter");
+      const currentCats = Array.from(catSelect.options).map((o) => o.value);
+      if (currentCats.length !== cats.length || currentCats.some((val, idx) => val !== cats[idx])) {
+        catSelect.innerHTML = cats
+          .map((c) => `<option value="${escapeHtml(c)}" ${c === refState.primaryCategory ? "selected" : ""}>Cat: ${escapeHtml(c)}</option>`)
+          .join("");
+      }
+    }
+
+    document.getElementById("ref-library-distributions").innerHTML = `
+      <div class="panel-card">
+        <h3>Library Distributions (${lib.total_assets || 0} Collected / ${lib.total_catalog_records || 0} Total)</h3>
+        <div class="small"><strong>Categories:</strong> ${distSummary(lib.categories)}</div>
+        <div class="small"><strong>Licenses:</strong> ${distSummary(lib.license_distribution)}</div>
       </div>
-
-      <section class="toolbar">
-        <div class="search-wrap"><input type="search" id="ref-search-input" placeholder="Search reference assets by title, ID, author, tags..." value="${escapeHtml(refState.search)}" /></div>
-        <div><select id="ref-cat-filter">${cats.map((c) => `<option value="${escapeHtml(c)}" ${c === refState.primaryCategory ? "selected" : ""}>Cat: ${escapeHtml(c)}</option>`).join("")}</select></div>
-        <div><select id="ref-lic-filter">${lics.map((l) => `<option value="${escapeHtml(l)}" ${l === refState.licenseKey ? "selected" : ""}>Lic: ${escapeHtml(l)}</option>`).join("")}</select></div>
-        <div><select id="ref-grade-filter">${grades.map((g) => `<option value="${escapeHtml(g)}" ${g === refState.gradeLetter ? "selected" : ""}>Grade: ${escapeHtml(g)}</option>`).join("")}</select></div>
-        <div><select id="ref-sort-select">
-          <option value="updated_at" ${refState.sortBy === "updated_at" ? "selected" : ""}>Sort: Recent</option>
-          <option value="technical_score" ${refState.sortBy === "technical_score" ? "selected" : ""}>Sort: Highest Grade</option>
-          <option value="downloads" ${refState.sortBy === "downloads" ? "selected" : ""}>Sort: Most Downloaded</option>
-          <option value="usefulness" ${refState.sortBy === "usefulness" ? "selected" : ""}>Sort: Most Useful</option>
-        </select></div>
-      </section>
-
-      <section class="asset-grid">${cards}</section>
+      <div class="panel-card">
+        <h3>Quality &amp; Blender Version Distributions</h3>
+        <div class="small"><strong>Grades:</strong> ${distSummary(lib.quality_distribution)}</div>
+        <div class="small"><strong>Blender Versions:</strong> ${distSummary(lib.blender_version_distribution)}</div>
+      </div>
     `;
 
-    document.getElementById("ref-search-input").addEventListener("input", (e) => {
-      refState.search = e.target.value;
-      loadReferenceAssets();
+    const grid = document.getElementById("ref-library-grid");
+    grid.innerHTML = cards;
+    grid.querySelectorAll(".ref-open-btn").forEach((btn) => {
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        openReferenceDetail(Number(btn.dataset.refid));
+      });
     });
-    document.getElementById("ref-cat-filter").addEventListener("change", (e) => {
-      refState.primaryCategory = e.target.value;
-      loadReferenceAssets();
-    });
-    document.getElementById("ref-lic-filter").addEventListener("change", (e) => {
-      refState.licenseKey = e.target.value;
-      loadReferenceAssets();
-    });
-    document.getElementById("ref-grade-filter").addEventListener("change", (e) => {
-      refState.gradeLetter = e.target.value;
-      loadReferenceAssets();
-    });
-    document.getElementById("ref-sort-select").addEventListener("change", (e) => {
-      refState.sortBy = e.target.value;
-      loadReferenceAssets();
-    });
-    document.querySelectorAll(".ref-card").forEach((card) => {
-      card.addEventListener("click", () => openReferenceDetail(Number(card.dataset.refid)));
+    grid.querySelectorAll(".ref-card").forEach((card) => {
+      card.addEventListener("click", (e) => {
+        if (!e.target.closest(".ref-open-btn")) {
+          openReferenceDetail(Number(card.dataset.refid));
+        }
+      });
     });
   }
 

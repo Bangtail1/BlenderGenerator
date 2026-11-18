@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import logging
+import threading
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
@@ -14,6 +16,9 @@ from .reference_storage import ReferenceStorage, category_folder_slug
 
 logger = logging.getLogger("blender_vault.reference.drive_sync")
 
+_ACTIVE_UPLOADS_LOCK = threading.Lock()
+_ACTIVE_UPLOADS: set[tuple[str, int]] = set()
+
 
 class ReferenceDriveSyncService:
     """Reuses GoogleDriveSyncService OAuth/retry/resumable uploads under a dedicated Reference Library/ tree."""
@@ -23,10 +28,37 @@ class ReferenceDriveSyncService:
         gdrive: GoogleDriveSyncService,
         ref_db: ReferenceDatabase,
         ref_storage: ReferenceStorage,
+        *,
+        upload_lease_seconds: int = 900,
     ) -> None:
         self.gdrive = gdrive
         self.ref_db = ref_db
         self.ref_storage = ref_storage
+        self.upload_lease_seconds = upload_lease_seconds
+
+    def _db_key(self) -> str:
+        return str(self.ref_db.db.db_path.resolve())
+
+    def _is_lease_expired(self, updated_at: Optional[str]) -> bool:
+        if not updated_at:
+            return True
+        try:
+            cleaned = updated_at.strip()
+            if cleaned.endswith("Z"):
+                cleaned = cleaned[:-1] + "+00:00"
+            dt = datetime.fromisoformat(cleaned)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return (datetime.now(timezone.utc) - dt).total_seconds() >= self.upload_lease_seconds
+        except ValueError:
+            return True
+
+    def recover_abandoned_uploads(self) -> int:
+        """Reset abandoned UPLOADING records from prior crashed runs back to PENDING."""
+        db_key = self._db_key()
+        with _ACTIVE_UPLOADS_LOCK:
+            active_ids = {aid for k, aid in _ACTIVE_UPLOADS if k == db_key}
+        return self.ref_db.recover_abandoned_drive_uploads(active_ids=active_ids)
 
     def ensure_reference_drive_tree(self) -> dict[str, Any]:
         """Create/locate Blender Asset Vault/Reference Library/... folders without modifying Branch 1 buckets."""
@@ -68,28 +100,38 @@ class ReferenceDriveSyncService:
         if not rec:
             raise KeyError(f"Reference asset {blendswap_id} not found.")
 
-        svc = self.gdrive.get_service()
-        tree = self.ensure_reference_drive_tree()
+        if not rec.primary_file_path or not Path(rec.primary_file_path).is_file():
+            self.ref_db.update_drive_sync_state(blendswap_id, status=DriveSyncStatus.FAILED)
+            raise FileNotFoundError(
+                f"Primary reference binary missing for BlendSwap #{blendswap_id}: {rec.primary_file_path}"
+            )
 
-        cat_folder = self.gdrive._ensure_child_folder(svc, tree["assets_id"], category_folder_slug(rec.primary_category))
-        asset_folder = self.gdrive._ensure_child_folder(svc, cat_folder, str(rec.blendswap_id))
+        upload_key = (self._db_key(), blendswap_id)
+        with _ACTIVE_UPLOADS_LOCK:
+            _ACTIVE_UPLOADS.add(upload_key)
 
-        self.ref_db.update_drive_sync_state(blendswap_id, status=DriveSyncStatus.UPLOADING, folder_id=asset_folder)
-
+        asset_folder: Optional[str] = rec.drive_folder_id
         uploaded: list[DriveFileRecord] = []
         try:
+            svc = self.gdrive.get_service()
+            tree = self.ensure_reference_drive_tree()
+
+            cat_folder = self.gdrive._ensure_child_folder(svc, tree["assets_id"], category_folder_slug(rec.primary_category))
+            asset_folder = self.gdrive._ensure_child_folder(svc, cat_folder, str(rec.blendswap_id))
+
+            self.ref_db.update_drive_sync_state(blendswap_id, status=DriveSyncStatus.UPLOADING, folder_id=asset_folder)
+
             # 1. Primary downloaded binary (original untouched)
-            if rec.primary_file_path and Path(rec.primary_file_path).is_file():
-                p = Path(rec.primary_file_path)
-                uploaded.append(
-                    self.gdrive._upload_and_verify_file(
-                        svc,
-                        local_path=p,
-                        remote_name=p.name,
-                        parent_folder_id=asset_folder,
-                        role="reference_asset",
-                    )
+            p = Path(rec.primary_file_path)
+            uploaded.append(
+                self.gdrive._upload_and_verify_file(
+                    svc,
+                    local_path=p,
+                    remote_name=p.name,
+                    parent_folder_id=asset_folder,
+                    role="reference_asset",
                 )
+            )
 
             # 2. Preview images inside previews subfolder
             if rec.preview_paths:
@@ -172,6 +214,9 @@ class ReferenceDriveSyncService:
                 drive_files=uploaded,
             )
             raise
+        finally:
+            with _ACTIVE_UPLOADS_LOCK:
+                _ACTIVE_UPLOADS.discard(upload_key)
 
     def sync_benchmark_report(self, report_path: Path) -> Optional[DriveFileRecord]:
         if not report_path.is_file():
@@ -202,12 +247,20 @@ class ReferenceDriveSyncService:
     def sync_pending_assets(self, *, max_items: int = 20) -> dict[str, Any]:
         """Retry/sync any downloaded/graded reference assets not yet verified on Google Drive."""
         assets = self.ref_db.list_reference_assets(include_details=False)
-        pending = [
-            a
-            for a in assets
-            if a.primary_file_path
-            and a.drive_sync_status in (DriveSyncStatus.NOT_SYNCED, DriveSyncStatus.PENDING, DriveSyncStatus.FAILED)
-        ][:max_items]
+        db_key = self._db_key()
+        with _ACTIVE_UPLOADS_LOCK:
+            active_ids = {aid for k, aid in _ACTIVE_UPLOADS if k == db_key}
+
+        def _is_retryable(rec: ReferenceAssetRecord) -> bool:
+            if not rec.primary_file_path:
+                return False
+            if rec.drive_sync_status in (DriveSyncStatus.NOT_SYNCED, DriveSyncStatus.PENDING, DriveSyncStatus.FAILED):
+                return True
+            if rec.drive_sync_status == DriveSyncStatus.UPLOADING:
+                return rec.blendswap_id not in active_ids and self._is_lease_expired(rec.updated_at)
+            return False
+
+        pending = [a for a in assets if _is_retryable(a)][:max_items]
         synced = 0
         failed: list[dict[str, Any]] = []
         for item in pending:

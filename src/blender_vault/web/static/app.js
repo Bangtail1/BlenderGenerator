@@ -554,14 +554,29 @@ async function openDriveModal() {
         .join("");
       foldersHtml = `
         <div class="panel-card">
-          <h3>Destination Folder Selection</h3>
-          <p class="small muted">Current Root: <strong>${escapeHtml(st.root_folder_name)}</strong> (${escapeHtml(st.root_folder_id || "Will create on first upload")})</p>
+          <h3>Option 1: App-Managed Vault Folder (Recommended for <code>drive.file</code>)</h3>
+          <p class="small muted">
+            Current Root: <strong>${escapeHtml(st.root_folder_name)}</strong>
+            ${
+              st.root_folder_id
+                ? `(<a href="https://drive.google.com/drive/folders/${encodeURIComponent(st.root_folder_id)}" target="_blank">${escapeHtml(st.root_folder_id)}</a>)`
+                : "(Not initialized yet — will create in My Drive)"
+            }
+          </p>
+          <div class="form-row">
+            <input type="text" id="drive-new-folder-name" placeholder="Folder name in My Drive" value="${escapeHtml(st.root_folder_name || "Blender Asset Vault")}" />
+            <button class="btn btn-primary" id="btn-create-drive-folder">Create &amp; Initialize Vault Folder</button>
+          </div>
+          <p class="small muted">Creates <code>My Drive/${escapeHtml(st.root_folder_name || "Blender Asset Vault")}</code> (syncs to <code>G:\\My Drive\\...</code>) with all category subfolders.</p>
+        </div>
+        <div class="panel-card">
+          <h3>Or Choose Existing App-Created Folder</h3>
           <div class="form-row">
             <select id="drive-folder-select"><option value="">-- App-created Root Folders --</option>${opts}</select>
-            <input type="text" id="drive-folder-id-input" placeholder="Or paste Google Drive Folder ID" value="${escapeHtml(st.root_folder_id || "")}" />
+            <input type="text" id="drive-folder-id-input" placeholder="Paste Folder ID or Drive folder URL" value="${escapeHtml(st.root_folder_id || "")}" />
           </div>
           <div class="action-row">
-            <button class="btn btn-primary" id="btn-save-drive-folder">Set Folder &amp; Initialize Vault Tree</button>
+            <button class="btn btn-secondary" id="btn-save-drive-folder">Set Folder &amp; Initialize Vault Tree</button>
             <button class="btn btn-secondary" id="btn-rebuild-from-drive">Rebuild Catalogue from Drive</button>
           </div>
         </div>
@@ -606,18 +621,40 @@ async function openDriveModal() {
   document.getElementById("drive-folder-select")?.addEventListener("change", (e) => {
     if (e.target.value) document.getElementById("drive-folder-id-input").value = e.target.value;
   });
+  document.getElementById("btn-create-drive-folder")?.addEventListener("click", async () => {
+    const msgEl = document.getElementById("drive-modal-msg");
+    const folderName = (document.getElementById("drive-new-folder-name").value || "").trim() || "Blender Asset Vault";
+    showFeedback(msgEl, `Creating/initializing '${folderName}' and Vault category folders...`, "info");
+    try {
+      const res = await api("/api/gdrive/select-folder", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ folder_name: folderName }),
+      });
+      await loadHealth();
+      await openDriveModal();
+      showFeedback(
+        document.getElementById("drive-modal-msg"),
+        `Ready! Vault folder '${res.selected.folder_name}' (${res.selected.folder_id}) initialized in My Drive.`,
+        "ok"
+      );
+    } catch (e) {
+      showFeedback(msgEl, e.message, "err");
+    }
+  });
   document.getElementById("btn-save-drive-folder")?.addEventListener("click", async () => {
     const msgEl = document.getElementById("drive-modal-msg");
     const fid = document.getElementById("drive-folder-id-input").value.trim();
-    if (!fid) return showFeedback(msgEl, "Enter or select a destination folder ID first.", "err");
+    if (!fid) return showFeedback(msgEl, "Enter or select a destination folder ID first, or click 'Create & Initialize Vault Folder' above.", "err");
     try {
       const res = await api("/api/gdrive/select-folder", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ folder_id: fid }),
       });
-      showFeedback(msgEl, `Selected '${res.selected.folder_name}' and verified Vault subfolder tree.`, "ok");
       await loadHealth();
+      await openDriveModal();
+      showFeedback(document.getElementById("drive-modal-msg"), `Selected '${res.selected.folder_name}' and verified Vault subfolder tree.`, "ok");
     } catch (e) {
       showFeedback(msgEl, e.message, "err");
     }
@@ -879,4 +916,16 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   await loadHealth();
   await loadAssets();
+
+  const urlParams = new URLSearchParams(window.location.search);
+  if (urlParams.has("gdrive_connected")) {
+    window.history.replaceState({}, "", "/");
+    await openDriveModal();
+    showFeedback(document.getElementById("drive-modal-msg"), "Google Drive OAuth connected! Click 'Create & Initialize Vault Folder' below to set up your folder.", "ok");
+  } else if (urlParams.has("gdrive_error")) {
+    const gErr = urlParams.get("gdrive_error");
+    window.history.replaceState({}, "", "/");
+    await openDriveModal();
+    showFeedback(document.getElementById("drive-modal-msg"), `Google Drive auth failed: ${gErr}`, "err");
+  }
 });

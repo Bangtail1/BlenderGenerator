@@ -752,6 +752,35 @@ class ReferenceDatabase:
                 ),
             )
 
+    def recover_abandoned_drive_uploads(self, active_ids: Optional[set[int]] = None) -> int:
+        """Reset abandoned UPLOADING rows from prior crashed runs back to PENDING."""
+        active = sorted(active_ids or set())
+        now = utc_now_iso()
+        with self.db.connect() as conn:
+            if active:
+                placeholders = ",".join("?" for _ in active)
+                cur = conn.execute(
+                    f"""
+                    UPDATE ref_assets SET
+                        drive_sync_status = ?,
+                        updated_at = ?
+                    WHERE drive_sync_status = ?
+                      AND blendswap_id NOT IN ({placeholders})
+                    """,
+                    (DriveSyncStatus.PENDING.value, now, DriveSyncStatus.UPLOADING.value, *active),
+                )
+            else:
+                cur = conn.execute(
+                    """
+                    UPDATE ref_assets SET
+                        drive_sync_status = ?,
+                        updated_at = ?
+                    WHERE drive_sync_status = ?
+                    """,
+                    (DriveSyncStatus.PENDING.value, now, DriveSyncStatus.UPLOADING.value),
+                )
+            return int(cur.rowcount or 0)
+
     # ------------------------------------------------------------------
     # Inspections & Grades
     # ------------------------------------------------------------------
@@ -959,7 +988,7 @@ class ReferenceDatabase:
     def get_incomplete_cycles(self) -> list[CollectionCycleRecord]:
         with self.db.connect() as conn:
             rows = conn.execute(
-                "SELECT * FROM ref_collection_cycles WHERE status IN ('PENDING', 'RUNNING') ORDER BY started_at ASC"
+                "SELECT * FROM ref_collection_cycles WHERE status IN ('PENDING', 'RUNNING', 'RETRY_WAIT') ORDER BY started_at ASC"
             ).fetchall()
             return [CollectionCycleRecord(**dict(r)) for r in rows]
 
@@ -1088,14 +1117,14 @@ class ReferenceDatabase:
             )
 
     def has_free_repeat_window(self, blendswap_id: int, file_id: Optional[int], hours: int = 23) -> bool:
-        """Return True if a free/repeat ticket or successful download occurred within the 24h repeat window."""
+        """Return True if a free/repeat ticket or successful download occurred for the exact file within 24h."""
         cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).replace(microsecond=0).isoformat()
         with self.db.connect() as conn:
             if file_id is not None:
                 row = conn.execute(
                     """
                     SELECT 1 FROM ref_download_tickets
-                    WHERE blendswap_id = ? AND (file_id = ? OR file_id IS NULL)
+                    WHERE blendswap_id = ? AND file_id = ?
                       AND reason IN ('free_allowance', 'repeat', 'own_asset')
                       AND granted_at >= ?
                     LIMIT 1
@@ -1106,7 +1135,8 @@ class ReferenceDatabase:
                 row = conn.execute(
                     """
                     SELECT 1 FROM ref_download_tickets
-                    WHERE blendswap_id = ? AND reason IN ('free_allowance', 'repeat', 'own_asset')
+                    WHERE blendswap_id = ? AND file_id IS NULL
+                      AND reason IN ('free_allowance', 'repeat', 'own_asset')
                       AND granted_at >= ?
                     LIMIT 1
                     """,
@@ -1132,7 +1162,7 @@ class ReferenceDatabase:
                 row = conn.execute(
                     """
                     SELECT 1 FROM ref_download_history
-                    WHERE blendswap_id = ? AND success = 1 AND downloaded_at >= ?
+                    WHERE blendswap_id = ? AND file_id IS NULL AND success = 1 AND downloaded_at >= ?
                     LIMIT 1
                     """,
                     (blendswap_id, cutoff),

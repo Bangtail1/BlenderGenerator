@@ -195,6 +195,23 @@ _LICENSE_RULES: dict[str, _LicenseRule] = {
         requires_additional_review=True,
         warnings=("Commercial license requires additional legal/purchase review; excluded from automated free collection.",),
     ),
+    "unknown": _LicenseRule(
+        key="unknown",
+        display_name="Unknown / Unrecognized",
+        default_url="",
+        category=LicenseCategory.UNKNOWN,
+        primary_class=LicenseClass.UNKNOWN,
+        applicable_classes=(LicenseClass.UNKNOWN,),
+        suitable_for_benchmarking=False,
+        requires_attribution=True,
+        share_alike_obligation=False,
+        non_commercial_only=False,
+        no_derivatives=True,
+        requires_additional_review=True,
+        warnings=(
+            "Unrecognized or missing license identifier; unsuitable for automated benchmarking and requires manual review.",
+        ),
+    ),
 }
 
 
@@ -212,8 +229,7 @@ def normalize_license_key(raw_key: Optional[str]) -> str:
         return "cc0"
     if "gal" in text:
         return "gal"
-    # Fallback conservative classification
-    return "gal"
+    return "unknown"
 
 
 def assess_license(info: BlendSwapLicenseInfo, *, license_source_override: Optional[str] = None) -> LicenseAssessment:

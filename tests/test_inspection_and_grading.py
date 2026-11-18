@@ -151,3 +151,76 @@ def test_category_specific_grading_profiles_diverge_appropriately() -> None:
     )
     assert unrigged_as_rigged.grading_profile == "rigged"
     assert any("armature" in w.lower() for w in unrigged_as_rigged.weaknesses)
+
+
+def test_archive_extraction_limits_and_gltf_external_buffer_copy(tmp_path: Path) -> None:
+    import json
+    import struct
+    import tarfile
+    from io import BytesIO
+    import pytest
+    from blender_vault.reference.inspector_service import _safe_extract_tar, _safe_extract_zip
+
+    # 1. ZIP and TAR member count & byte limits
+    zip_many = tmp_path / "many.zip"
+    with zipfile.ZipFile(zip_many, "w") as zf:
+        zf.writestr("a.txt", b"12345")
+        zf.writestr("b.txt", b"12345")
+        zf.writestr("c.txt", b"12345")
+
+    with pytest.raises(ValueError, match="member limit"):
+        _safe_extract_zip(zip_many, tmp_path / "out_z1", max_members=2)
+    with pytest.raises(ValueError, match="size budget"):
+        _safe_extract_zip(zip_many, tmp_path / "out_z2", max_bytes=8)
+
+    tar_many = tmp_path / "many.tar"
+    with tarfile.open(tar_many, "w") as tf:
+        for name in ("a.txt", "b.txt", "c.txt"):
+            data = b"123456"
+            info = tarfile.TarInfo(name=name)
+            info.size = len(data)
+            tf.addfile(info, BytesIO(data))
+
+    with pytest.raises(ValueError, match="member limit"):
+        _safe_extract_tar(tar_many, tmp_path / "out_t1", max_members=2)
+    with pytest.raises(ValueError, match="size budget"):
+        _safe_extract_tar(tar_many, tmp_path / "out_t2", max_bytes=10)
+
+    # 2. Standalone .gltf with external .bin buffer copies buffer into isolated workspace and imports cleanly
+    gltf_dir = tmp_path / "gltf_src"
+    buf_dir = gltf_dir / "buffers"
+    buf_dir.mkdir(parents=True)
+    # Single triangle: 3 float32 positions (36 bytes)
+    bin_bytes = struct.pack("<9f", 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0)
+    (buf_dir / "tri.bin").write_bytes(bin_bytes)
+    gltf_doc = {
+        "asset": {"version": "2.0"},
+        "scene": 0,
+        "scenes": [{"nodes": [0]}],
+        "nodes": [{"mesh": 0}],
+        "meshes": [{"primitives": [{"attributes": {"POSITION": 0}}]}],
+        "buffers": [{"uri": "buffers/tri.bin", "byteLength": len(bin_bytes)}],
+        "bufferViews": [{"buffer": 0, "byteOffset": 0, "byteLength": len(bin_bytes), "target": 34962}],
+        "accessors": [
+            {
+                "bufferView": 0,
+                "componentType": 5126,
+                "count": 3,
+                "type": "VEC3",
+                "min": [0.0, 0.0, 0.0],
+                "max": [1.0, 1.0, 0.0],
+            }
+        ],
+    }
+    gltf_path = gltf_dir / "triangle.gltf"
+    gltf_path.write_text(json.dumps(gltf_doc), encoding="utf-8")
+
+    cfg = Settings(vault_data_dir=tmp_path / "vault")
+    cfg.ensure_directories()
+    runner = BlenderWorkerRunner(cfg.blender_executable, timeout_seconds=120)
+    inspector = ReferenceInspectorService(cfg, runner)
+    report = inspector.inspect_asset_file(source_file=gltf_path, blendswap_id=9001)
+    assert report.file_opened_ok is True
+    assert report.inspection_completed_ok is True
+    assert report.vertex_count == 3
+    assert report.triangle_count == 1

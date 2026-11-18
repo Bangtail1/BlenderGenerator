@@ -24,6 +24,7 @@ class LicenseClass(str, Enum):
     E_NO_DERIVATIVES = "E"
     F_GAL_ADDITIONAL_REVIEW = "F"
     G_COMMERCIAL_ADDITIONAL_REVIEW = "G"
+    UNKNOWN = "UNKNOWN"
 
 
 class LicenseCategory(str, Enum):
@@ -33,6 +34,7 @@ class LicenseCategory(str, Enum):
     OTHER_CC = "Other Creative Commons"
     GAL = "GAL"
     COMMERCIAL = "Commercial"
+    UNKNOWN = "Unknown"
 
 
 PRIMARY_CATEGORIES: tuple[str, ...] = (
@@ -137,8 +139,8 @@ class BlendSwapAuthor(BaseModel):
 
 
 class BlendSwapLicenseInfo(BaseModel):
-    key: str = "gal"
-    name: str = "GAL"
+    key: str = ""
+    name: str = "Unknown"
     url: str = ""
     license_source: str = "uploader_declared"
 

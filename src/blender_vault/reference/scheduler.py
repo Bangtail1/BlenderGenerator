@@ -151,11 +151,12 @@ class DailyCollectionScheduler:
         force: bool = False,
         trigger_type: str = "scheduled",
         max_downloads: Optional[int] = None,
+        sync_to_drive: bool = True,
     ) -> Optional[CollectionCycleRecord]:
         """Run recovery + scheduled collection if due (or forced) under lock."""
         with self._run_lock:
             # Always recover interrupted cycles first
-            self.collector.recover_incomplete_cycles()
+            self.collector.recover_incomplete_cycles(sync_to_drive=sync_to_drive)
 
             cfg = self.get_schedule_config()
             tz = resolve_timezone(cfg["timezone"])
@@ -179,6 +180,7 @@ class DailyCollectionScheduler:
                 cycle_date=today_str,
                 trigger_type=trigger_type,
                 max_downloads=max_downloads,
+                sync_to_drive=sync_to_drive,
             )
             if cycle.status in {"COMPLETED", "PARTIAL", "SKIPPED_NO_ALLOWANCE"}:
                 self.db.set_setting(self.KEY_LAST_DATE, today_str)

@@ -11,6 +11,7 @@ import logging
 import mimetypes
 import os
 import random
+import re
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -308,17 +309,39 @@ class GoogleDriveSyncService:
         )
         return res.get("files", [])
 
+    @staticmethod
+    def extract_drive_folder_id(raw_value: str) -> str:
+        """Accept either a bare Drive folder ID or a drive.google.com/drive/folders/<ID> URL."""
+        val = (raw_value or "").strip()
+        match = re.search(r"/folders/([a-zA-Z0-9_-]+)", val)
+        if match:
+            return match.group(1)
+        return val
+
     def select_destination_folder(self, folder_id: str, folder_name: Optional[str] = None) -> dict[str, Any]:
         svc = self.get_service()
-        meta = self._retry(lambda: svc.files().get(fileId=folder_id, fields="id,name,mimeType,trashed").execute())
+        resolved_id = self.extract_drive_folder_id(folder_id)
+        if not resolved_id:
+            raise ValueError("Folder ID cannot be empty.")
+        meta = self._retry(lambda: svc.files().get(fileId=resolved_id, fields="id,name,mimeType,trashed").execute())
         if meta.get("trashed"):
-            raise ValueError(f"Selected folder '{folder_id}' is in trash.")
+            raise ValueError(f"Selected folder '{resolved_id}' is in trash.")
         if meta.get("mimeType") != FOLDER_MIME:
-            raise ValueError(f"Drive ID '{folder_id}' is not a folder.")
-        resolved_name = folder_name or meta["name"]
+            raise ValueError(f"Drive ID '{resolved_id}' is not a folder.")
+        resolved_name = (folder_name or "").strip() or meta["name"]
         self.db.set_setting("gdrive_root_folder_id", meta["id"])
         self.db.set_setting("gdrive_root_folder_name", resolved_name)
         return {"folder_id": meta["id"], "folder_name": resolved_name}
+
+    def create_or_use_root_folder(self, folder_name: Optional[str] = None) -> dict[str, Any]:
+        """Create or reuse an app-owned root folder in My Drive (ideal for drive.file scope)."""
+        svc = self.get_service()
+        target_name = (folder_name or "").strip() or self.settings.gdrive_root_folder_name
+        vault_root_id = self._ensure_child_folder(svc, "root", target_name)
+        self.db.set_setting("gdrive_root_folder_id", vault_root_id)
+        self.db.set_setting("gdrive_root_folder_name", target_name)
+        tree = self.ensure_vault_folder_tree(vault_root_id)
+        return {"selected": {"folder_id": vault_root_id, "folder_name": target_name}, "vault_tree": tree}
 
     def ensure_vault_folder_tree(self, parent_root_id: Optional[str] = None) -> dict[str, Any]:
         """Ensure the organized Blender Asset Vault directory hierarchy exists in Drive."""

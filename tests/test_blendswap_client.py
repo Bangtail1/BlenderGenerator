@@ -128,3 +128,68 @@ def test_blendswap_credit_guard_and_expired_url_refresh(tmp_path: Path) -> None:
         client.close()
     finally:
         server.shutdown()
+
+
+def test_blendswap_origin_check_and_file_scoped_repeat_window(tmp_path: Path) -> None:
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    import threading
+    from blender_vault.reference.blendswap_client import _is_same_origin
+
+    assert _is_same_origin("https://blendswap.com/cdn/1.png", "https://blendswap.com/api/v1") is True
+    assert _is_same_origin("https://blendswap.com:443/cdn/1.png", "https://blendswap.com/api/v1") is True
+    assert _is_same_origin("https://blendswap.com.attacker.example/cdn/1.png", "https://blendswap.com/api/v1") is False
+    assert _is_same_origin("https://blendswap.com@attacker.example/cdn/1.png", "https://blendswap.com/api/v1") is False
+    assert _is_same_origin("http://blendswap.com/cdn/1.png", "https://blendswap.com/api/v1") is False
+
+    seen_auth: list[str] = []
+
+    class CaptureHandler(BaseHTTPRequestHandler):
+        def log_message(self, format, *args) -> None:
+            return
+
+        def do_GET(self) -> None:
+            seen_auth.append(self.headers.get("Authorization", ""))
+            body = b"hello"
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), CaptureHandler)
+    t = threading.Thread(target=srv.serve_forever, daemon=True)
+    t.start()
+    try:
+        other_port = srv.server_address[1]
+        cfg = Settings(
+            vault_data_dir=tmp_path / "vault",
+            blendswap_key="bsk_secret_token",
+            blendswap_base_url=f"http://127.0.0.1:{other_port + 1}/api/v1",
+        )
+        ref_db = ReferenceDatabase(VaultDatabase(cfg.db_path))
+        client = BlendSwapClient(cfg, ref_db)
+
+        # Different port must NOT receive Bearer Authorization header
+        client.download_binary(
+            f"http://127.0.0.1:{other_port}/preview.png",
+            tmp_path / "out.png",
+            send_auth_if_same_host=True,
+        )
+        assert seen_auth == [""]
+
+        # Same exact origin DOES receive Bearer Authorization header
+        client.base_url = f"http://127.0.0.1:{other_port}/api/v1"
+        client.download_binary(
+            f"http://127.0.0.1:{other_port}/preview.png",
+            tmp_path / "out2.png",
+            send_auth_if_same_host=True,
+        )
+        assert seen_auth[-1] == "Bearer bsk_secret_token"
+
+        # Free repeat grant for file_id=10011 must NOT apply to file_id=None or file_id=10012
+        ref_db.record_ticket_grant(1001, 10011, "free_allowance", "2099-01-01T00:00:00Z")
+        assert ref_db.has_free_repeat_window(1001, 10011) is True
+        assert ref_db.has_free_repeat_window(1001, 10012) is False
+        assert ref_db.has_free_repeat_window(1001, None) is False
+        client.close()
+    finally:
+        srv.shutdown()

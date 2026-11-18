@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import random
+import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -84,6 +85,31 @@ def _extract_first_int(data: dict[str, Any], keys: tuple[str, ...], default: int
     return default
 
 
+def _origin_tuple(raw_url: str) -> Optional[tuple[str, str, int]]:
+    """Return normalized (scheme, hostname, port) for origin comparison, rejecting embedded userinfo."""
+    try:
+        parsed = urlparse(raw_url)
+    except ValueError:
+        return None
+    if parsed.username is not None or parsed.password is not None:
+        return None
+    scheme = (parsed.scheme or "").lower()
+    host = (parsed.hostname or "").lower()
+    if scheme not in {"http", "https"} or not host:
+        return None
+    port = parsed.port
+    if port is None:
+        port = 443 if scheme == "https" else 80
+    return (scheme, host, port)
+
+
+def _is_same_origin(url_a: str, url_b: str) -> bool:
+    """Return True only when two URLs share the exact scheme, hostname, and port."""
+    origin_a = _origin_tuple(url_a)
+    origin_b = _origin_tuple(url_b)
+    return origin_a is not None and origin_a == origin_b
+
+
 def is_url_expired(expires_at: Optional[str], *, skew_seconds: int = 30) -> bool:
     """Return True if ISO timestamp expires_at is in the past (with safety skew)."""
     if not expires_at:
@@ -126,6 +152,7 @@ class BlendSwapClient:
         )
         self.max_retry_sleep = max_retry_sleep
         self.last_rate_limit: dict[str, Optional[int]] = {"limit": None, "remaining": None, "reset": None}
+        self._download_request_lock = threading.Lock()
 
     def close(self) -> None:
         if self._owns_client:
@@ -411,55 +438,56 @@ class BlendSwapClient:
             self.settings.allow_credit_spend if allow_credit_spend is None else allow_credit_spend
         )
 
-        # Always verify allowance before calling POST /downloads unless known 24h free repeat
-        is_free_repeat = bool(self.ref_db and self.ref_db.has_free_repeat_window(asset_id, file_id))
-        if not credit_spend_allowed and not is_free_repeat and not skip_allowance_precheck:
-            acct = self.get_me()
-            if acct.free_downloads_remaining <= 0:
-                raise BlendSwapAllowanceExhaustedError(
-                    "Daily free BlendSwap download allowance is exhausted (0 remaining) and automatic credit spending is disabled.",
-                    status_code=402,
-                    error_key="free_allowance_exhausted",
-                )
+        # Serialize allowance precheck and ticket creation within this process.
+        with self._download_request_lock:
+            is_free_repeat = bool(self.ref_db and self.ref_db.has_free_repeat_window(asset_id, file_id))
+            if not credit_spend_allowed and not is_free_repeat and not skip_allowance_precheck:
+                acct = self.get_me()
+                if acct.free_downloads_remaining <= 0:
+                    raise BlendSwapAllowanceExhaustedError(
+                        "Daily free BlendSwap download allowance is exhausted (0 remaining) and automatic credit spending is disabled.",
+                        status_code=402,
+                        error_key="free_allowance_exhausted",
+                    )
 
-        body: dict[str, Any] = {"asset_id": int(asset_id)}
-        if file_id is not None:
-            body["file_id"] = int(file_id)
+            body: dict[str, Any] = {"asset_id": int(asset_id)}
+            if file_id is not None:
+                body["file_id"] = int(file_id)
 
-        payload = self._request_json("POST", "/downloads", json_body=body)
-        data = (
-            payload["data"]
-            if isinstance(payload.get("data"), dict) and "download_url" not in payload
-            else payload
-        )
-
-        lic_raw = data.get("license")
-        lic_info = self._parse_license_info(lic_raw, data.get("license_source"))
-        ticket = BlendSwapDownloadTicket(
-            download_url=str(data.get("download_url") or ""),
-            expires_at=data.get("expires_at"),
-            charged=bool(data.get("charged", False)),
-            credits_spent=int(data.get("credits_spent") or 0),
-            credits_remaining=_parse_int(data.get("credits_remaining")),
-            reason=str(data.get("reason") or "free_allowance"),
-            preview_urls=[str(u) for u in (data.get("preview_urls") or []) if u],
-            asset=data.get("asset") if isinstance(data.get("asset"), dict) else None,
-            file=data.get("file") if isinstance(data.get("file"), dict) else None,
-            license=lic_info,
-            license_source=str(data.get("license_source") or (lic_info.license_source if lic_info else "uploader_declared")),
-        )
-        if not ticket.download_url:
-            raise BlendSwapAPIError("BlendSwap POST /downloads returned an empty download_url.")
-        if self.ref_db and not ticket.charged:
-            resolved_fid = file_id or _parse_int((ticket.file or {}).get("id"))
-            self.ref_db.record_ticket_grant(asset_id, resolved_fid, ticket.reason, ticket.expires_at)
-        if ticket.charged and not credit_spend_allowed:
-            logger.error(
-                "BlendSwap charged %s credits for asset %s despite credit protection!",
-                ticket.credits_spent,
-                asset_id,
+            payload = self._request_json("POST", "/downloads", json_body=body)
+            data = (
+                payload["data"]
+                if isinstance(payload.get("data"), dict) and "download_url" not in payload
+                else payload
             )
-        return ticket
+
+            lic_raw = data.get("license")
+            lic_info = self._parse_license_info(lic_raw, data.get("license_source"))
+            ticket = BlendSwapDownloadTicket(
+                download_url=str(data.get("download_url") or ""),
+                expires_at=data.get("expires_at"),
+                charged=bool(data.get("charged", False)),
+                credits_spent=int(data.get("credits_spent") or 0),
+                credits_remaining=_parse_int(data.get("credits_remaining")),
+                reason=str(data.get("reason") or "free_allowance"),
+                preview_urls=[str(u) for u in (data.get("preview_urls") or []) if u],
+                asset=data.get("asset") if isinstance(data.get("asset"), dict) else None,
+                file=data.get("file") if isinstance(data.get("file"), dict) else None,
+                license=lic_info,
+                license_source=str(data.get("license_source") or (lic_info.license_source if lic_info else "uploader_declared")),
+            )
+            if not ticket.download_url:
+                raise BlendSwapAPIError("BlendSwap POST /downloads returned an empty download_url.")
+            if self.ref_db and not ticket.charged:
+                resolved_fid = file_id or _parse_int((ticket.file or {}).get("id"))
+                self.ref_db.record_ticket_grant(asset_id, resolved_fid, ticket.reason, ticket.expires_at)
+            if ticket.charged and not credit_spend_allowed:
+                logger.error(
+                    "BlendSwap charged %s credits for asset %s despite credit protection!",
+                    ticket.credits_spent,
+                    asset_id,
+                )
+            return ticket
 
     # ------------------------------------------------------------------
     # Binary Asset & Preview Downloading with Expiry Recovery
@@ -480,7 +508,7 @@ class BlendSwapClient:
         dest_path.parent.mkdir(parents=True, exist_ok=True)
         part_path = dest_path.with_suffix(dest_path.suffix + ".part")
         headers: dict[str, str] = {"User-Agent": "BlenderAssetVault-ReferenceEngine/2.0"}
-        if send_auth_if_same_host and url.startswith(self.base_url.rsplit("/api/", 1)[0]):
+        if send_auth_if_same_host and _is_same_origin(url, self.base_url):
             headers["Authorization"] = f"Bearer {self._require_key()}"
 
         try:
@@ -581,9 +609,11 @@ class BlendSwapClient:
     @classmethod
     def _parse_license_info(cls, raw: Any, fallback_source: Optional[str] = None) -> BlendSwapLicenseInfo:
         if isinstance(raw, dict):
+            raw_key = str(raw.get("key") or "").strip().lower()
+            raw_name = str(raw.get("name") or raw.get("key") or "Unknown")
             return BlendSwapLicenseInfo(
-                key=str(raw.get("key") or "gal").lower(),
-                name=str(raw.get("name") or raw.get("key") or "GAL"),
+                key=raw_key,
+                name=raw_name,
                 url=str(raw.get("url") or ""),
                 license_source=str(raw.get("license_source") or fallback_source or "uploader_declared"),
             )
@@ -593,7 +623,7 @@ class BlendSwapClient:
                 name=raw.strip(),
                 license_source=fallback_source or "uploader_declared",
             )
-        return BlendSwapLicenseInfo(license_source=fallback_source or "uploader_declared")
+        return BlendSwapLicenseInfo(key="", name="Unknown", license_source=fallback_source or "uploader_declared")
 
     @classmethod
     def _parse_file_info(cls, raw: dict[str, Any]) -> BlendSwapFileInfo:

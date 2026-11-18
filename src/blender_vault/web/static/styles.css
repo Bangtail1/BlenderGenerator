@@ -23,6 +23,8 @@ body {
   color: var(--text);
   line-height: 1.45;
 }
+a:not(.btn) { color: #79c0ff; }
+a:not(.btn):hover { color: #a5d6ff; }
 
 .topbar {
   display: flex;
@@ -147,6 +149,7 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--a
 .card-title { margin: 0; font-size: 1rem; font-weight: 700; }
 .card-meta { font-size: 0.78rem; color: var(--muted); }
 .card-badges { display: flex; gap: 6px; flex-wrap: wrap; margin-top: auto; padding-top: 6px; }
+.card-actions { display: flex; justify-content: flex-end; padding-top: 6px; }
 
 .empty-state {
   grid-column: 1 / -1; text-align: center; padding: 56px 24px;

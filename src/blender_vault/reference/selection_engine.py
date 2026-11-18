@@ -126,6 +126,7 @@ class SelectionEngine:
 
         raw_candidates: list[BlendSwapAssetSummary] = []
         seen_ids: set[int] = set()
+        eligible_uncollected_count = 0
         for page in range(1, max_pages + 1):
             items, pagination = self.client.search_assets(
                 asset_type="model_3d",
@@ -139,12 +140,43 @@ class SelectionEngine:
                 if item.id not in seen_ids:
                     seen_ids.add(item.id)
                     raw_candidates.append(item)
+                    if self._is_discovery_eligible_uncollected(item):
+                        eligible_uncollected_count += 1
             total_pages = int(pagination.get("pages") or 1)
-            if page >= total_pages or len(raw_candidates) >= target_count * 12:
+            if page >= total_pages or eligible_uncollected_count >= target_count * 12:
                 break
 
         cat_counts = self.ref_db.get_category_distribution()
         return self.select_from_candidates(raw_candidates, target_count=target_count, category_distribution=cat_counts)
+
+    def _prefilter_candidate(self, summary: BlendSwapAssetSummary) -> tuple[Optional[str], Optional[Any]]:
+        """Run fast local checks (zero API calls); returns (rejection_reason, license_assessment)."""
+        if self.ref_db.has_downloaded_asset(summary.id):
+            return "already_collected", None
+
+        existing = self.ref_db.get_reference_asset(summary.id)
+        if existing and existing.status.value == "FAILED":
+            return "previously_failed", None
+
+        if summary.asset_type != "model_3d":
+            return "non_3d_model_type", None
+        if not summary.title.strip() or (not summary.description.strip() and not summary.tags):
+            return "insufficient_metadata", None
+
+        lic = assess_license(summary.license, license_source_override=summary.license_source)
+        if lic.license_key == "commercial" or not lic.suitable_for_benchmarking:
+            return "commercial_or_unsuitable_license", lic
+        if self.settings.reference_license_policy == "permissive_only" and lic.license_key not in {"cc0", "cc_by"}:
+            return "license_policy_filtered", lic
+        if self.settings.reference_license_policy == "cc_only" and not lic.license_key.startswith("cc"):
+            return "license_policy_filtered", lic
+
+        return None, lic
+
+    def _is_discovery_eligible_uncollected(self, summary: BlendSwapAssetSummary) -> bool:
+        """Fast local check (zero API calls) for whether a candidate counts toward discovery target."""
+        rejection, _ = self._prefilter_candidate(summary)
+        return rejection is None
 
     def select_from_candidates(
         self,
@@ -163,34 +195,10 @@ class SelectionEngine:
         max_cat_count = max(cat_dist.values(), default=0)
 
         for summary in candidates:
-            # 1. Duplicate / repeat-window / past failure checks
-            if self.ref_db.has_downloaded_asset(summary.id):
-                reject("already_collected")
-                continue
-
-            existing = self.ref_db.get_reference_asset(summary.id)
-            if existing and existing.status.value == "FAILED":
-                reject("previously_failed")
-                continue
-
-            # 2. Asset type & explicit / empty metadata checks
-            if summary.asset_type != "model_3d":
-                reject("non_3d_model_type")
-                continue
-            if not summary.title.strip() or (not summary.description.strip() and not summary.tags):
-                reject("insufficient_metadata")
-                continue
-
-            # 3. License policy filtering
-            lic = assess_license(summary.license, license_source_override=summary.license_source)
-            if lic.license_key == "commercial" or not lic.suitable_for_benchmarking:
-                reject("commercial_or_unsuitable_license")
-                continue
-            if self.settings.reference_license_policy == "permissive_only" and lic.license_key not in {"cc0", "cc_by"}:
-                reject("license_policy_filtered")
-                continue
-            if self.settings.reference_license_policy == "cc_only" and not lic.license_key.startswith("cc"):
-                reject("license_policy_filtered")
+            # 1-3. Duplicate, past-failure, asset-type, metadata, and license checks
+            rejection, lic = self._prefilter_candidate(summary)
+            if rejection is not None or lic is None:
+                reject(rejection or "filtered")
                 continue
 
             # 4. File availability & format validation

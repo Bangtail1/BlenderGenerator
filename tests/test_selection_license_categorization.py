@@ -208,3 +208,86 @@ def test_selection_engine_reports_shortage_honestly(tmp_path: Path) -> None:
         assert result.shortage_reason is not None and "2/7" in result.shortage_reason
     finally:
         server.shutdown()
+
+
+def test_generic_category_falls_back_to_text_and_unknown_license_rejected(tmp_path: Path) -> None:
+    from blender_vault.reference.models import LicenseCategory
+
+    # 1. Generic "Other" category falls through to title/tag classification ("Wooden chair" -> Furniture)
+    chair_summary = BlendSwapAssetSummary(
+        id=601,
+        title="Wooden chair",
+        description="Handcrafted dining seat",
+        category=BlendSwapCategoryInfo(id=0, name="Other", slug="other"),
+        tags=["furniture"],
+    )
+    assert classify_primary_category(chair_summary) == "Furniture"
+    assert "hard-surface" in classify_technical_categories(chair_summary)
+
+    # 2. Unrecognized & missing license identifiers map to unknown (unsuitable for benchmarking)
+    unknown_assessment = assess_license(BlendSwapLicenseInfo(key="proprietary_custom", name="Custom EULA"))
+    assert unknown_assessment.license_key == "unknown"
+    assert unknown_assessment.license_category == LicenseCategory.UNKNOWN
+    assert unknown_assessment.primary_class == LicenseClass.UNKNOWN
+    assert unknown_assessment.suitable_for_benchmarking is False
+    assert unknown_assessment.requires_additional_review is True
+
+    parsed_missing = BlendSwapClient._parse_license_info({})
+    missing_assessment = assess_license(parsed_missing)
+    assert missing_assessment.license_key == "unknown"
+    assert missing_assessment.suitable_for_benchmarking is False
+
+    # 3. Selection skips unknown licenses and pages past already-collected assets
+    catalog = default_catalog_assets()
+    # Make top 20 items already collected across page 1 (per_page=10), and put fresh item on page 3
+    extra_catalog = []
+    for idx in range(1, 22):
+        base = dict(catalog[0])
+        base["id"] = 5000 + idx
+        base["title"] = f"Collected Chair {idx}"
+        base["counts"] = {"downloads": 100_000 - idx, "likes": 50, "comments": 5}
+        base["files"] = [{**catalog[0]["files"][0], "id": (5000 + idx) * 10 + 1}]
+        extra_catalog.append(base)
+    # Mark asset 5021 with unknown license and asset 5020 as fresh valid
+    extra_catalog.append(
+        {
+            **dict(catalog[1]),
+            "id": 5099,
+            "title": "Unknown License Model",
+            "license": {"key": "custom_eula", "name": "Custom EULA"},
+            "counts": {"downloads": 999_999, "likes": 10, "comments": 1},
+            "files": [{**catalog[1]["files"][0], "id": 50991}],
+        }
+    )
+
+    server, base_url, _ = build_mock_blendswap_server(assets=extra_catalog)
+    try:
+        cfg = Settings(
+            vault_data_dir=tmp_path / "vault",
+            blendswap_key="bsk_test_valid_key",
+            blendswap_base_url=f"{base_url}/api/v1",
+        )
+        ref_db = ReferenceDatabase(VaultDatabase(cfg.db_path))
+        for idx in range(1, 21):
+            ref_db.upsert_reference_asset(
+                ReferenceAssetRecord(
+                    blendswap_id=5000 + idx,
+                    title=f"Collected Chair {idx}",
+                    url=f"https://blendswap.com/blend/{5000 + idx}",
+                    license_assessment=assess_license(BlendSwapLicenseInfo(key="cc0", name="CC0")),
+                    primary_category="Furniture",
+                    status=ReferenceAssetStatus.GRADED,
+                    primary_file_path=f"/tmp/c_{idx}.blend",
+                )
+            )
+        client = BlendSwapClient(cfg, ref_db)
+        selector = SelectionEngine(cfg, ref_db, client)
+        # per_page=10, target_count=1 -> page 1 (5099 + 9 collected) + page 2 (10 collected) + page 3 (5020 collected, 5021 fresh)
+        result = selector.discover_and_select(target_count=1, max_pages=4, per_page=10)
+        client.close()
+
+        selected_ids = [c.asset.id for c in result.selected]
+        assert selected_ids == [5021]
+        assert result.filtered_reasons.get("commercial_or_unsuitable_license", 0) >= 1
+    finally:
+        server.shutdown()
