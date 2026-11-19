@@ -462,3 +462,35 @@ def test_open_reference_zip_archive_in_blender(tmp_path: Path, monkeypatch) -> N
         # Missing asset returns 404 cleanly
         miss = client.post("/api/reference/assets/999999/open-blender")
         assert miss.status_code == 404
+
+
+def test_delete_vault_asset_removes_db_rows_and_local_files(tmp_path: Path) -> None:
+    app = _build_test_app(tmp_path)
+    with TestClient(app) as client:
+        # Generate a quick asset synchronously via /api/assets/generate
+        gen = client.post(
+            "/api/assets/generate",
+            json={
+                "prompt": "Wooden chair duplicate test",
+                "name": "Duplicate Chair",
+                "category": "Furniture",
+                "complexity": "low",
+            },
+        )
+        assert gen.status_code == 200, gen.text
+        asset_id = gen.json()["asset_id"]
+        asset_dir = tmp_path / "vault" / "assets" / asset_id
+        assert asset_dir.is_dir()
+
+        # Delete it
+        del_resp = client.delete(f"/api/assets/{asset_id}")
+        assert del_resp.status_code == 200, del_resp.text
+        payload = del_resp.json()
+        assert payload["deleted"] is True
+        assert payload["asset_id"] == asset_id
+        assert payload["files_removed"]["assets_dir_removed"] is True
+        assert not asset_dir.exists()
+
+        # Confirm 404 afterwards
+        assert client.get(f"/api/assets/{asset_id}").status_code == 404
+        assert client.delete(f"/api/assets/{asset_id}").status_code == 404

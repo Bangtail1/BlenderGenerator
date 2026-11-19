@@ -128,6 +128,23 @@ class VaultStorage:
 
         return {"discovered": discovered, "reindexed": reindexed, "errors": errors}
 
+    def delete_asset_files(self, asset_id: str) -> dict[str, bool]:
+        """Safely remove local asset and original import directories for a deleted asset."""
+        cleaned_id = str(asset_id or "").strip()
+        if not cleaned_id or Path(cleaned_id).name != cleaned_id or cleaned_id in (".", ".."):
+            raise ValueError(f"Invalid asset_id '{asset_id}' for deletion.")
+
+        removed = {"assets_dir_removed": False, "imports_dir_removed": False}
+        for key, base_dir in (("assets_dir_removed", self.assets_dir), ("imports_dir_removed", self.imports_dir)):
+            base_resolved = base_dir.resolve()
+            target = (base_dir / cleaned_id).resolve()
+            if not target.is_relative_to(base_resolved) or target == base_resolved:
+                raise ValueError(f"Refusing to delete outside vault directory: {target}")
+            if target.exists():
+                shutil.rmtree(target, ignore_errors=True)
+                removed[key] = not target.exists()
+        return removed
+
     @staticmethod
     def _atomic_write_text(target: Path, content: str) -> None:
         target.parent.mkdir(parents=True, exist_ok=True)

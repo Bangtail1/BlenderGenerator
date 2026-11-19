@@ -261,6 +261,33 @@ def create_app(
             raise HTTPException(status_code=404, detail=f"Asset '{asset_id}' not found.")
         return asset.model_dump()
 
+    @app.delete("/api/assets/{asset_id}")
+    def delete_asset(asset_id: str) -> dict[str, Any]:
+        asset = db.get_asset(asset_id)
+        if not asset:
+            raise HTTPException(status_code=404, detail=f"Asset '{asset_id}' not found.")
+        active_jobs = [
+            j
+            for j in db.list_jobs(asset_id=asset_id, limit=50)
+            if j.get("status") in ("QUEUED", "RUNNING")
+        ]
+        if active_jobs:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Asset '{asset_id}' has an active job ({active_jobs[0]['job_id']}); cancel it before deleting.",
+            )
+        try:
+            files_removed = storage.delete_asset_files(asset_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        deleted = db.delete_asset(asset_id)
+        return {
+            "deleted": deleted,
+            "asset_id": asset_id,
+            "name": asset.name,
+            "files_removed": files_removed,
+        }
+
     # ------------------------------------------------------------------
     # Generate & Import
     # ------------------------------------------------------------------

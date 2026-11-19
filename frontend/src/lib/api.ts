@@ -110,6 +110,11 @@ export const studioApi = {
   },
   getVaultAsset: (assetId: string) =>
     apiFetch<VaultAsset>(`/api/assets/${encodeURIComponent(assetId)}`),
+  deleteVaultAsset: (assetId: string) =>
+    apiFetch<{ deleted: boolean; asset_id: string; name: string }>(
+      `/api/assets/${encodeURIComponent(assetId)}`,
+      { method: "DELETE" },
+    ),
   reviewAssetVersion: (
     assetId: string,
     version: number,

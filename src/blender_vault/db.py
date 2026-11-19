@@ -444,6 +444,17 @@ class VaultDatabase:
                 )
             self._insert_version_row(conn, v)
 
+    def delete_asset(self, asset_id: str) -> bool:
+        """Remove an asset, its versions, and its job ledger rows from the local Vault DB."""
+        with self.connect() as conn:
+            existing = conn.execute("SELECT 1 FROM assets WHERE asset_id = ?", (asset_id,)).fetchone()
+            if not existing:
+                return False
+            conn.execute("DELETE FROM jobs WHERE asset_id = ?", (asset_id,))
+            conn.execute("DELETE FROM asset_versions WHERE asset_id = ?", (asset_id,))
+            conn.execute("DELETE FROM assets WHERE asset_id = ?", (asset_id,))
+            return True
+
     def record_job(
         self,
         *,
